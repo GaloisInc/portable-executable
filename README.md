@@ -1,0 +1,1 @@
+This repository implements utilities for working with the Portable Executable (PE) file format.  PE is the native executable format for Windows and .NET.  These tools are intended to support analysis of Windows binaries in Haskell.  Currently, this repository has a PE parser (pe-parser).  Eventually, it will also have a separate package for constructing PE files (pe-builder).

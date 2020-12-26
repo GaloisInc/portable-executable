@@ -43,8 +43,10 @@ module PE.Parser (
   DataDirectoryEntry(..),
   parseDataDirectoryEntry,
   ppDataDirectoryEntry,
+  DataDirectoryEntryName(..),
   -- ** Sections
   module PPS,
+  getSection,
   -- ** Pre-defined machine types
   module PPM,
   -- ** Subsystems
@@ -58,9 +60,11 @@ import qualified Control.Monad.Fail as MF
 import qualified Data.Binary.Get as G
 import qualified Data.ByteString.Lazy as BSL
 import           Data.Char ( ord )
+import qualified Data.Foldable as F
 import qualified Data.Functor.Const as FC
 import qualified Data.Functor.Identity as FI
 import           Data.Int ( Int64 )
+import           Data.Maybe ( fromMaybe, mapMaybe )
 import qualified Data.Parameterized.NatRepr as PN
 import           Data.Parameterized.Some ( Some(..) )
 import qualified Data.Parameterized.Vector as PV
@@ -183,6 +187,42 @@ data DataDirectoryEntry =
                      }
   deriving (Show)
 
+data DataDirectoryEntryName = ExportTable
+                            | ImportTable
+                            | ResourceTable
+                            | ExceptionTable
+                            | CertificateTable
+                            | BaseRelocationTable
+                            | Debug
+                            | Architecture
+                            | GlobalPtr
+                            | TLSTable
+                            | LoadConfigTable
+                            | BoundImportTable
+                            | ImportAddressTable
+                            | DelayImportDescriptor
+                            | CLRRuntimeHeader
+                            deriving (Show, Bounded, Enum)
+
+ppDataDirectoryEntryName :: DataDirectoryEntryName -> PP.Doc ann
+ppDataDirectoryEntryName n =
+  case n of
+    ExportTable -> PP.pretty "Export Table"
+    ImportTable -> PP.pretty "Import Table"
+    ResourceTable -> PP.pretty "Resource Table"
+    ExceptionTable -> PP.pretty "Exception Table"
+    CertificateTable -> PP.pretty "Certificate Table"
+    BaseRelocationTable -> PP.pretty "Base Relocation Table"
+    Debug -> PP.pretty "Debug"
+    Architecture -> PP.pretty "Architecture"
+    GlobalPtr -> PP.pretty "Global Ptr"
+    TLSTable -> PP.pretty "TLS Table"
+    LoadConfigTable -> PP.pretty "Load Config Table"
+    BoundImportTable -> PP.pretty "Bound Import Table"
+    ImportAddressTable -> PP.pretty "Import Address Table"
+    DelayImportDescriptor -> PP.pretty "Delay Import Descriptor"
+    CLRRuntimeHeader -> PP.pretty "CLR Runtime Header"
+
 parseDataDirectoryEntry :: G.Get DataDirectoryEntry
 parseDataDirectoryEntry = do
   addr <- G.getWord32le
@@ -191,9 +231,30 @@ parseDataDirectoryEntry = do
                             , dataDirectoryEntrySize = size
                             }
 
-ppDataDirectoryEntry :: DataDirectoryEntry -> PP.Doc ann
-ppDataDirectoryEntry dde =
-  PPP.ppHex (dataDirectoryEntryAddress dde) <> PP.pretty " " <> PP.parens (PPP.ppBytes (dataDirectoryEntrySize dde))
+ppDataDirectoryEntry :: [PPS.SectionHeader] -> (DataDirectoryEntryName, DataDirectoryEntry) -> Maybe (PP.Doc ann)
+ppDataDirectoryEntry secHeaders (entryName, dde)
+  | dataDirectoryEntryAddress dde == 0 = Nothing
+  | otherwise =
+    Just $ PP.hcat [ PPP.ppHex (dataDirectoryEntryAddress dde)
+                   , PP.pretty " "
+                   , PP.parens (PPP.ppBytes (dataDirectoryEntrySize dde))
+                   , PP.pretty " "
+                   , PP.parens (ppDataDirectoryEntryName entryName <> inSec)
+                   ]
+  where
+    inSec = fromMaybe mempty $ do
+      hdr <- findDataDirectoryEntrySection secHeaders dde
+      return (PP.pretty " in section " <> PP.pretty (PPS.sectionHeaderNameText hdr))
+
+findDataDirectoryEntrySection :: [PPS.SectionHeader] -> DataDirectoryEntry -> Maybe PPS.SectionHeader
+findDataDirectoryEntrySection secHeaders dde =
+  F.find (sectionContains (dataDirectoryEntryAddress dde)) secHeaders
+
+sectionContains :: Word32 -> PPS.SectionHeader -> Bool
+sectionContains addr hdr = addr >= secStart && addr < secEnd
+  where
+    secStart = PPS.sectionHeaderVirtualAddress hdr
+    secEnd = secStart + PPS.sectionHeaderVirtualSize hdr
 
 -- | The "Optional" PE Header
 --
@@ -258,8 +319,8 @@ data PEOptionalHeader w =
 
 deriving instance (PPW.PEConstraints w) => Show (PEOptionalHeader w)
 
-ppPEOptionalHeaders :: PEOptionalHeader w -> PP.Doc ann
-ppPEOptionalHeaders oh = PPW.withPEConstraints (peOptionalHeaderClass oh) $
+ppPEOptionalHeaders :: [PPS.SectionHeader] -> PEOptionalHeader w -> PP.Doc ann
+ppPEOptionalHeaders secHeaders oh = PPW.withPEConstraints (peOptionalHeaderClass oh) $
   PP.vsep [ PP.pretty "PE Format: " <> PPW.ppPEClass (peOptionalHeaderClass oh)
           , PP.pretty "Linker Version: " <> PPP.ppVersion (peOptionalHeaderMajorLinkerVersion oh, peOptionalHeaderMinorLinkerVersion oh)
           , PP.pretty "Size of code: " <> PPP.ppBytes (peOptionalHeaderSizeOfCode oh)
@@ -285,8 +346,10 @@ ppPEOptionalHeaders oh = PPW.withPEConstraints (peOptionalHeaderClass oh) $
           , PP.pretty "Size of Heap Commit: " <> PPP.ppBytes (peOptionalHeaderSizeOfHeapCommit oh)
           , PP.pretty "Loader Flags: " <> PPP.ppHex (peOptionalHeaderLoaderFlags oh)
           , PP.pretty "Data Directory"
-          , PP.indent 4 (PP.vsep (map ppDataDirectoryEntry (peOptionalHeaderDataDirectory oh)))
+          , PP.indent 4 (PP.vcat (mapMaybe (ppDataDirectoryEntry secHeaders) (zip dirEntryNames (peOptionalHeaderDataDirectory oh))))
           ]
+  where
+    dirEntryNames = [minBound..maxBound]
 
 parsePEOptionalHeader :: Word16 -> G.Get (Some PEOptionalHeader)
 parsePEOptionalHeader optHeaderSize = do
@@ -430,7 +493,7 @@ ppPEHeaderInfo :: PEHeaderInfo Maybe w -> PP.Doc ann
 ppPEHeaderInfo phi =
   PP.vsep [ ppPEHeader (peHeader phi)
           -- FIXME: Add a header to mark out the optional headers
-          , maybe mempty ppPEOptionalHeaders (peOptionalHeader phi)
+          , maybe mempty (ppPEOptionalHeaders (peSectionHeaders phi)) (peOptionalHeader phi)
           , PP.pretty "Sections:"
           , PP.indent 4 (PP.vsep (map ppsh (zip [0..] (peSectionHeaders phi))))
           ]

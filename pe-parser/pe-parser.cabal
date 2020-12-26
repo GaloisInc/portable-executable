@@ -16,6 +16,8 @@ extra-source-files:  CHANGELOG.md
 library
   exposed-modules:     PE.Parser
   other-modules:       PE.Parser.Characteristics
+                       PE.Parser.DLLFlags
+                       PE.Parser.ExportDirectoryTable
                        PE.Parser.Machine
                        PE.Parser.PEWord
                        PE.Parser.Pretty

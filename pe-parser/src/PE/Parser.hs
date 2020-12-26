@@ -51,8 +51,14 @@ module PE.Parser (
   module PPM,
   -- ** Subsystems
   module PPSu,
-  -- ** Characteristics
-  module PPC
+  -- ** Flags
+  -- *** Characteristics
+  module PPC,
+  -- *** DLL Flags
+  module PPDLL,
+  -- ** Directory Entries
+  -- *** Export Directory Table
+  module PPEDT
   ) where
 
 import           Control.Monad ( guard, replicateM, unless )
@@ -73,6 +79,8 @@ import qualified Prettyprinter as PP
 import qualified Prettyprinter.Render.String as PPRS
 
 import qualified PE.Parser.Characteristics as PPC
+import qualified PE.Parser.DLLFlags as PPDLL
+import qualified PE.Parser.ExportDirectoryTable as PPEDT
 import qualified PE.Parser.Machine as PPM
 import qualified PE.Parser.Pretty as PPP
 import qualified PE.Parser.PEWord as PPW
@@ -303,10 +311,7 @@ data PEOptionalHeader w =
                    , peOptionalHeaderSizeOfHeaders :: Word32
                    , peOptionalHeaderChecksum :: Word32
                    , peOptionalHeaderSubsystem :: PPSu.Subsystem
-                   -- ^ FIXME: This could become its own type
-                   , peOptionalHeaderDLLCharacteristics :: Word16
-                   -- ^ FIXME: This could be its own type (distinct from
-                   -- 'Characteristics', as DLLs have a different set)
+                   , peOptionalHeaderDLLCharacteristics :: PPDLL.DLLFlags
                    , peOptionalHeaderSizeOfStackReserve :: PPW.PEWord w
                    , peOptionalHeaderSizeOfStackCommit :: PPW.PEWord w
                    , peOptionalHeaderSizeOfHeapReserve :: PPW.PEWord w
@@ -315,6 +320,13 @@ data PEOptionalHeader w =
                    , peOptionalHeaderDataDirectory :: [DataDirectoryEntry]
                    -- ^ Note: The on-disk file actually has a number of entries
                    -- here; the header parser parses them all out
+                   --
+                   -- Empty 'DataDirectoryEntries' are included because they are
+                   -- present in the on-disk file.  The position in the table is
+                   -- important, as each index corresponds to a specific table
+                   -- entry (see 'DataDirectoryEntryName' for supported values).
+                   -- This format is also useful, as it allows us to robustly
+                   -- parse unrecognized table values.
                    }
 
 deriving instance (PPW.PEConstraints w) => Show (PEOptionalHeader w)
@@ -339,7 +351,7 @@ ppPEOptionalHeaders secHeaders oh = PPW.withPEConstraints (peOptionalHeaderClass
           , PP.pretty "Size of Image: " <> PPP.ppBytes (peOptionalHeaderSizeOfImage oh)
           , PP.pretty "Size of Headers: " <> PPP.ppBytes (peOptionalHeaderSizeOfHeaders oh)
           , PP.pretty "Subsystem: " <> PPSu.ppSubsystem (peOptionalHeaderSubsystem oh)
-          , PP.pretty "DLL Characteristics: " <> PPP.ppHex (peOptionalHeaderDLLCharacteristics oh)
+          , PP.pretty "DLL Characteristics: " <> PPDLL.ppDLLFlags (peOptionalHeaderDLLCharacteristics oh)
           , PP.pretty "Size of Stack Reserve: " <> PPP.ppBytes (peOptionalHeaderSizeOfStackReserve oh)
           , PP.pretty "Size of Stack Commit: " <> PPP.ppBytes (peOptionalHeaderSizeOfStackCommit oh)
           , PP.pretty "Size of Heap Reserve: " <> PPP.ppBytes (peOptionalHeaderSizeOfHeapReserve oh)
@@ -388,7 +400,7 @@ parsePEOptionalHeaderAs optHeaderSize peClass = do
   sizeOfHeaders <- G.getWord32le
   checksum <- G.getWord32le
   subsystem <- PPSu.parseSubsystem
-  dllChar <- G.getWord16le
+  dllChar <- PPDLL.parseDLLFlags
   stackReserve <- PPW.parsePEWord peClass
   stackCommit <- PPW.parsePEWord peClass
   heapReserve <- PPW.parsePEWord peClass

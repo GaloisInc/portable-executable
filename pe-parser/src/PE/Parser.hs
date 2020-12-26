@@ -2,6 +2,7 @@
 {-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE RankNTypes #-}
+{-# LANGUAGE ScopedTypeVariables #-}
 {-# LANGUAGE StandaloneDeriving #-}
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
@@ -45,8 +46,7 @@ module PE.Parser (
   module PPS,
   Section(..),
   getSection,
-  getExportDirectoryTable,
-  getImportDirectoryTable,
+  getDataDirectoryEntry,
   -- ** Pre-defined machine types
   module PPM,
   -- ** Subsystems
@@ -73,10 +73,12 @@ import qualified Data.Foldable as F
 import qualified Data.Functor.Const as FC
 import qualified Data.Functor.Identity as FI
 import           Data.Int ( Int64 )
+import           Data.Kind ( Type )
 import           Data.Maybe ( mapMaybe )
 import qualified Data.Parameterized.NatRepr as PN
 import           Data.Parameterized.Some ( Some(..) )
 import qualified Data.Parameterized.Vector as PV
+import           Data.Proxy ( Proxy(..) )
 import           Data.Word ( Word8, Word16, Word32 )
 import qualified Prettyprinter as PP
 import qualified Prettyprinter.Render.String as PPRS
@@ -290,11 +292,9 @@ ppPEOptionalHeaders secHeaders oh = PPW.withPEConstraints (peOptionalHeaderClass
           , PP.indent 4 (PP.vcat (mapMaybe (PPDDE.ppDataDirectoryEntry secHeaders) (indexDirectoryEntries oh)))
           ]
 
-indexDirectoryEntries :: PEOptionalHeader w -> [(PPDDE.DataDirectoryEntryName, PPDDE.DataDirectoryEntry)]
+indexDirectoryEntries :: PEOptionalHeader w -> [(Some PPDDE.DataDirectoryEntryName, PPDDE.DataDirectoryEntry)]
 indexDirectoryEntries oh =
-  zip dirEntryNames (peOptionalHeaderDataDirectory oh)
-  where
-    dirEntryNames = [minBound .. maxBound]
+  zip PPDDE.allDataDirectoryEntryNames (peOptionalHeaderDataDirectory oh)
 
 parsePEOptionalHeader :: Word16 -> G.Get (Some PEOptionalHeader)
 parsePEOptionalHeader optHeaderSize = do
@@ -530,11 +530,11 @@ getSection phi secHeader = do
 data Warning = Warning
   deriving (Show)
 
-data PEException = MissingDirectoryEntry PPDDE.DataDirectoryEntryName
+data PEException = MissingDirectoryEntry (Some PPDDE.DataDirectoryEntryName)
                  -- ^ The named 'DataDirectoryEntry' is not present in the file (the table entry is missing or zero)
                  | DirectoryEntryAddressNotMapped [PPS.SectionHeader] PPDDE.DataDirectoryEntry
                  -- ^ The address named in the 'DataDirectoryEntry' is not mapped in any of the sections defined in the executable
-                 | DirectoryEntryParseFailure PPDDE.DataDirectoryEntryName PPDDE.DataDirectoryEntry Int64 String
+                 | DirectoryEntryParseFailure (Some PPDDE.DataDirectoryEntryName) PPDDE.DataDirectoryEntry Int64 String
                  -- ^ The 'DataDirectoryEntry' named could not be parsed
                  | SectionContentsSizeMismatch PPS.SectionHeader Int64
                  -- ^ The given 'PPS.SectionHeader' declares an offset (and
@@ -544,19 +544,42 @@ data PEException = MissingDirectoryEntry PPDDE.DataDirectoryEntryName
 
 instance X.Exception PEException
 
-getDataDirectoryEntry :: (X.MonadThrow m)
-                        => PPDDE.DataDirectoryEntryName
-                        -- ^ The data directory entry whose contents should be extracted
-                        -> G.Get t
-                        -- ^ The parser to use for this table
-                        -> PEHeaderInfo FI.Identity w
-                        -- ^ The PE header to parse
-                        -> m t
-getDataDirectoryEntry dirEntryName parser phi = do
+class GetDataDirectoryEntry (entry :: PPDDE.DataDirectoryEntryKind) where
+  type DataDirectoryEntryType entry :: Type
+  dataDirectoryEntryParser :: proxy entry -> G.Get (DataDirectoryEntryType entry)
+
+instance GetDataDirectoryEntry 'PPDDE.ExportTableK where
+  type DataDirectoryEntryType 'PPDDE.ExportTableK = PPEDT.ExportDirectoryTable
+  dataDirectoryEntryParser _ = PPEDT.parseExportDirectoryTable
+
+instance GetDataDirectoryEntry 'PPDDE.ImportTableK where
+  type DataDirectoryEntryType 'PPDDE.ImportTableK = PPIDT.ImportDirectoryTable
+  dataDirectoryEntryParser _ = PPIDT.parseImportDirectoryTable
+
+-- | Parse the contents of the a 'PPDDE.DataDirectoryEntry' (given the name of
+-- that entry) from the file, if it is present.
+--
+-- The type of the return value is determined by the type family
+-- 'DataDirectoryEntryType' (i.e., the table type of the 'PPDDE.ExportTable' is
+-- 'PPEDT.ExportDataTable')
+--
+-- This can fail (via 'X.MonadThrow') if the PE does not contain a the table
+-- entry (i.e., it is not in the Data Directory or is marked as explicitly not
+-- present in the Data Directory).n Export Directory Table (i.e., if it is not a
+-- DLL), or if no mapped section contains the address named in the export
+-- directory table descriptor.
+getDataDirectoryEntry :: forall entry w m
+                       . (X.MonadThrow m, GetDataDirectoryEntry entry)
+                      => PPDDE.DataDirectoryEntryName entry
+                       -- ^ The data directory entry whose contents should be extracted
+                      -> PEHeaderInfo FI.Identity w
+                      -- ^ The PE header to parse
+                      -> m (DataDirectoryEntryType entry)
+getDataDirectoryEntry dirEntryName phi = do
   let optHeader = FI.runIdentity (peOptionalHeader phi)
   let entries = indexDirectoryEntries optHeader
   case F.find (PPDDE.isDirectoryEntry dirEntryName) entries of
-    Nothing -> X.throwM (MissingDirectoryEntry dirEntryName)
+    Nothing -> X.throwM (MissingDirectoryEntry (Some dirEntryName))
     Just (_, dde) -> do
       let secHeaders = peSectionHeaders phi
       case PPDDE.findDataDirectoryEntrySection secHeaders dde of
@@ -565,21 +588,7 @@ getDataDirectoryEntry dirEntryName parser phi = do
           let offsetInSection = PPDDE.dataDirectoryEntryAddress dde - PPS.sectionHeaderVirtualAddress containingSection
           sec <- getSection phi containingSection
           let tableStart = BSL.drop (fromIntegral offsetInSection) (sectionContents sec)
-          case G.runGetOrFail parser tableStart of
-            Left (_, errOff, msg) -> X.throwM (DirectoryEntryParseFailure dirEntryName dde errOff msg)
+          case G.runGetOrFail (dataDirectoryEntryParser (Proxy @entry)) tableStart of
+            Left (_, errOff, msg) -> X.throwM (DirectoryEntryParseFailure (Some dirEntryName) dde errOff msg)
             Right (_, _, edt) -> return edt
 
--- | Parse the contents of the 'PPEDT.ExportDirectoryTable'
---
--- This can fail (via 'X.MonadThrow') if the PE does not contain an Export
--- Directory Table (i.e., if it is not a DLL), or if no mapped section contains
--- the address named in the export directory table descriptor.
-getExportDirectoryTable :: (X.MonadThrow m)
-                        => PEHeaderInfo FI.Identity w
-                        -> m PPEDT.ExportDirectoryTable
-getExportDirectoryTable = getDataDirectoryEntry PPDDE.ExportTable PPEDT.parseExportDirectoryTable
-
-getImportDirectoryTable :: (X.MonadThrow m)
-                        => PEHeaderInfo FI.Identity w
-                        -> m PPIDT.ImportDirectoryTable
-getImportDirectoryTable = getDataDirectoryEntry PPDDE.ImportTable PPIDT.parseImportDirectoryTable

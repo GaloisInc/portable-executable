@@ -1,6 +1,12 @@
+{-# LANGUAGE DataKinds #-}
+{-# LANGUAGE GADTs #-}
+{-# LANGUAGE StandaloneDeriving #-}
+{-# LANGUAGE TemplateHaskell #-}
 module PE.Parser.DataDirectoryEntry (
   DataDirectoryEntry(..),
+  DataDirectoryEntryKind(..),
   DataDirectoryEntryName(..),
+  allDataDirectoryEntryNames,
   findDataDirectoryEntrySection,
   ppDataDirectoryEntryName,
   ppDataDirectoryEntry,
@@ -10,7 +16,10 @@ module PE.Parser.DataDirectoryEntry (
 
 import qualified Data.Binary.Get as G
 import qualified Data.Foldable as F
-import           Data.Maybe ( fromMaybe )
+import           Data.Maybe ( fromMaybe, isJust )
+import qualified Data.Parameterized.Classes as PC
+import           Data.Parameterized.Some ( Some(..) )
+import qualified Data.Parameterized.TH.GADT as PTG
 import           Data.Word ( Word32 )
 import qualified Prettyprinter as PP
 
@@ -23,30 +32,75 @@ data DataDirectoryEntry =
                      }
   deriving (Show)
 
+data DataDirectoryEntryKind = ExportTableK
+                            | ImportTableK
+                            | ResourceTableK
+                            | ExceptionTableK
+                            | CertificateTableK
+                            | BaseRelocationTableK
+                            | DebugK
+                            | ArchitectureK
+                            | GlobalPtrK
+                            | TLSTableK
+                            | LoadConfigTableK
+                            | BoundImportTableK
+                            | ImportAddressTableK
+                            | DelayImportDescriptorK
+                            | CLRRuntimeHeaderK
+
 -- | Names of each of entry in the Data Directory
 --
 -- These are in ordinal order (and that is important)
-data DataDirectoryEntryName = ExportTable
-                            | ImportTable
-                            | ResourceTable
-                            | ExceptionTable
-                            | CertificateTable
-                            | BaseRelocationTable
-                            | Debug
-                            | Architecture
-                            | GlobalPtr
-                            | TLSTable
-                            | LoadConfigTable
-                            | BoundImportTable
-                            | ImportAddressTable
-                            | DelayImportDescriptor
-                            | CLRRuntimeHeader
-                            deriving (Show, Bounded, Enum, Eq)
+data DataDirectoryEntryName entry where
+  ExportTable :: DataDirectoryEntryName 'ExportTableK
+  ImportTable :: DataDirectoryEntryName 'ImportTableK
+  ResourceTable :: DataDirectoryEntryName 'ResourceTableK
+  ExceptionTable :: DataDirectoryEntryName 'ExceptionTableK
+  CertificateTable :: DataDirectoryEntryName 'CertificateTableK
+  BaseRelocationTable :: DataDirectoryEntryName 'BaseRelocationTableK
+  Debug :: DataDirectoryEntryName 'DebugK
+  Architecture :: DataDirectoryEntryName 'ArchitectureK
+  GlobalPtr :: DataDirectoryEntryName 'GlobalPtrK
+  TLSTable :: DataDirectoryEntryName 'TLSTableK
+  LoadConfigTable :: DataDirectoryEntryName 'LoadConfigTableK
+  BoundImportTable :: DataDirectoryEntryName 'BoundImportTableK
+  ImportAddressTable :: DataDirectoryEntryName 'ImportAddressTableK
+  DelayImportDescriptor :: DataDirectoryEntryName 'DelayImportDescriptorK
+  CLRRuntimeHeader :: DataDirectoryEntryName 'CLRRuntimeHeaderK
 
-isDirectoryEntry :: DataDirectoryEntryName -> (DataDirectoryEntryName, a) -> Bool
-isDirectoryEntry name (entryName, _) = name == entryName
+$(return [])
 
-ppDataDirectoryEntryName :: DataDirectoryEntryName -> PP.Doc ann
+instance PC.ShowF DataDirectoryEntryName where
+  showsPrecF = $(PTG.structuralShowsPrec [t| DataDirectoryEntryName |])
+
+deriving instance Show (DataDirectoryEntryName entry)
+
+instance PC.TestEquality DataDirectoryEntryName where
+  testEquality = $(PTG.structuralTypeEquality [t| DataDirectoryEntryName |] [])
+
+allDataDirectoryEntryNames :: [Some DataDirectoryEntryName]
+allDataDirectoryEntryNames =
+  [ Some ExportTable
+  , Some ImportTable
+  , Some ResourceTable
+  , Some ExceptionTable
+  , Some CertificateTable
+  , Some BaseRelocationTable
+  , Some Debug
+  , Some Architecture
+  , Some GlobalPtr
+  , Some TLSTable
+  , Some LoadConfigTable
+  , Some BoundImportTable
+  , Some ImportAddressTable
+  , Some DelayImportDescriptor
+  , Some CLRRuntimeHeader
+  ]
+
+isDirectoryEntry :: DataDirectoryEntryName entry -> (Some DataDirectoryEntryName, a) -> Bool
+isDirectoryEntry name (Some entryName, _) = isJust (PC.testEquality name entryName)
+
+ppDataDirectoryEntryName :: DataDirectoryEntryName entry -> PP.Doc ann
 ppDataDirectoryEntryName n =
   case n of
     ExportTable -> PP.pretty "Export Table"
@@ -73,8 +127,8 @@ parseDataDirectoryEntry = do
                             , dataDirectoryEntrySize = size
                             }
 
-ppDataDirectoryEntry :: [PPS.SectionHeader] -> (DataDirectoryEntryName, DataDirectoryEntry) -> Maybe (PP.Doc ann)
-ppDataDirectoryEntry secHeaders (entryName, dde)
+ppDataDirectoryEntry :: [PPS.SectionHeader] -> (Some DataDirectoryEntryName, DataDirectoryEntry) -> Maybe (PP.Doc ann)
+ppDataDirectoryEntry secHeaders (Some entryName, dde)
   | dataDirectoryEntryAddress dde == 0 = Nothing
   | otherwise =
     Just $ PP.hcat [ PPP.ppHex (dataDirectoryEntryAddress dde)

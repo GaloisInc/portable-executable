@@ -27,6 +27,7 @@ library
   build-depends:       base >= 4.10 && < 5,
                        binary >= 0.8 && < 0.9,
                        bytestring >= 0.9 && < 0.12,
+                       exceptions >= 0.8 && < 0.11,
                        parameterized-utils >= 2 && < 3,
                        prettyprinter >= 1.7 && < 1.8,
                        text >= 1 && < 2

@@ -47,6 +47,7 @@ module PE.Parser (
   -- ** Sections
   module PPS,
   getSection,
+  getExportDirectoryTable,
   -- ** Pre-defined machine types
   module PPM,
   -- ** Subsystems
@@ -61,7 +62,8 @@ module PE.Parser (
   module PPEDT
   ) where
 
-import           Control.Monad ( guard, replicateM, unless )
+import           Control.Monad ( replicateM, unless )
+import qualified Control.Monad.Catch as X
 import qualified Control.Monad.Fail as MF
 import qualified Data.Binary.Get as G
 import qualified Data.ByteString.Lazy as BSL
@@ -195,6 +197,9 @@ data DataDirectoryEntry =
                      }
   deriving (Show)
 
+-- | Names of each of entry in the Data Directory
+--
+-- These are in ordinal order (and that is important)
 data DataDirectoryEntryName = ExportTable
                             | ImportTable
                             | ResourceTable
@@ -210,7 +215,7 @@ data DataDirectoryEntryName = ExportTable
                             | ImportAddressTable
                             | DelayImportDescriptor
                             | CLRRuntimeHeader
-                            deriving (Show, Bounded, Enum)
+                            deriving (Show, Bounded, Enum, Eq)
 
 ppDataDirectoryEntryName :: DataDirectoryEntryName -> PP.Doc ann
 ppDataDirectoryEntryName n =
@@ -358,10 +363,14 @@ ppPEOptionalHeaders secHeaders oh = PPW.withPEConstraints (peOptionalHeaderClass
           , PP.pretty "Size of Heap Commit: " <> PPP.ppBytes (peOptionalHeaderSizeOfHeapCommit oh)
           , PP.pretty "Loader Flags: " <> PPP.ppHex (peOptionalHeaderLoaderFlags oh)
           , PP.pretty "Data Directory"
-          , PP.indent 4 (PP.vcat (mapMaybe (ppDataDirectoryEntry secHeaders) (zip dirEntryNames (peOptionalHeaderDataDirectory oh))))
+          , PP.indent 4 (PP.vcat (mapMaybe (ppDataDirectoryEntry secHeaders) (indexDirectoryEntries oh)))
           ]
+
+indexDirectoryEntries :: PEOptionalHeader w -> [(DataDirectoryEntryName, DataDirectoryEntry)]
+indexDirectoryEntries oh =
+  zip dirEntryNames (peOptionalHeaderDataDirectory oh)
   where
-    dirEntryNames = [minBound..maxBound]
+    dirEntryNames = [minBound .. maxBound]
 
 parsePEOptionalHeader :: Word16 -> G.Get (Some PEOptionalHeader)
 parsePEOptionalHeader optHeaderSize = do
@@ -583,12 +592,58 @@ data Section =
 -- | Look up the contents of a 'Section'
 --
 -- This could fail if the data is missing from the underlying bytestring
-getSection :: PEHeaderInfo f w -> PPS.SectionHeader -> Maybe Section
+getSection :: (X.MonadThrow m) => PEHeaderInfo f w -> PPS.SectionHeader -> m Section
 getSection phi secHeader = do
-  guard (BSL.length content == fromIntegral (PPS.sectionHeaderSizeOfRawData secHeader))
-  return Section { sectionHeader = secHeader
-                 , sectionContents = content
-                 }
+  if BSL.length content == fromIntegral (PPS.sectionHeaderSizeOfRawData secHeader)
+    then return Section { sectionHeader = secHeader
+                        , sectionContents = content
+                        }
+    else X.throwM (SectionContentsSizeMismatch secHeader (BSL.length (peContents phi)))
   where
     prefix = BSL.drop (fromIntegral (PPS.sectionHeaderPointerToRawData secHeader)) (peContents phi)
     content = BSL.take (fromIntegral (PPS.sectionHeaderSizeOfRawData secHeader)) prefix
+
+data Warning = Warning
+  deriving (Show)
+
+data PEException = MissingDirectoryEntry DataDirectoryEntryName
+                 -- ^ The named 'DataDirectoryEntry' is not present in the file (the table entry is missing or zero)
+                 | DirectoryEntryAddressNotMapped [PPS.SectionHeader] DataDirectoryEntry
+                 -- ^ The address named in the 'DataDirectoryEntry' is not mapped in any of the sections defined in the executable
+                 | DirectoryEntryParseFailure DataDirectoryEntryName DataDirectoryEntry Int64 String
+                 -- ^ The 'DataDirectoryEntry' named could not be parsed
+                 | SectionContentsSizeMismatch PPS.SectionHeader Int64
+                 -- ^ The given 'PPS.SectionHeader' declares an offset (and
+                 -- size) for this section that does not match the available
+                 -- byte count in the bytestring
+  deriving (Show)
+
+instance X.Exception PEException
+
+-- | Parse the contents of the 'PPEDT.ExportDirectoryTable'
+--
+-- This can fail (via 'X.MonadThrow') if the PE does not contain an Export
+-- Directory Table (i.e., if it is not a DLL), or if no mapped section contains
+-- the address named in the export directory table descriptor.
+getExportDirectoryTable :: (X.MonadThrow m)
+                        => PEHeaderInfo FI.Identity w
+                        -> m (PPEDT.ExportDirectoryTable)
+getExportDirectoryTable phi = do
+  let optHeader = FI.runIdentity (peOptionalHeader phi)
+  let entries = indexDirectoryEntries optHeader
+  case F.find (isDirectoryEntry ExportTable) entries of
+    Nothing -> X.throwM (MissingDirectoryEntry ExportTable)
+    Just (_, dde) -> do
+      let secHeaders = peSectionHeaders phi
+      case findDataDirectoryEntrySection secHeaders dde of
+        Nothing -> X.throwM (DirectoryEntryAddressNotMapped secHeaders dde)
+        Just containingSection -> do
+          let offsetInSection = dataDirectoryEntryAddress dde - PPS.sectionHeaderVirtualAddress containingSection
+          sec <- getSection phi containingSection
+          let tableStart = BSL.drop (fromIntegral offsetInSection) (sectionContents sec)
+          case G.runGetOrFail PPEDT.parseExportDirectoryTable tableStart of
+            Left (_, errOff, msg) -> X.throwM (DirectoryEntryParseFailure ExportTable dde errOff msg)
+            Right (_, _, edt) -> return edt
+
+isDirectoryEntry :: DataDirectoryEntryName -> (DataDirectoryEntryName, a) -> Bool
+isDirectoryEntry name (entryName, _) = name == entryName

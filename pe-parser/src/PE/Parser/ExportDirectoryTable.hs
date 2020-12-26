@@ -1,7 +1,8 @@
 module PE.Parser.ExportDirectoryTable (
   ExportDirectoryTable(..),
   parseExportDirectoryTable,
-  ppExportDirectoryTable
+  ppExportDirectoryTable,
+  exportDirectoryTableSize
   ) where
 
 import qualified Data.Binary.Get as G
@@ -48,6 +49,10 @@ data ExportDirectoryTable =
                        -- Image Base
                        }
   deriving (Show)
+
+-- | The number of bytes in memory of the 'ExportDirectoryTable'
+exportDirectoryTableSize :: Word32
+exportDirectoryTableSize = 40
 
 ppExportDirectoryTable :: ExportDirectoryTable -> PP.Doc ann
 ppExportDirectoryTable edt =

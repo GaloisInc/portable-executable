@@ -46,6 +46,7 @@ module PE.Parser (
   module PPS,
   Section(..),
   getSection,
+  GetDataDirectoryEntry(..),
   getDataDirectoryEntry,
   -- ** Pre-defined machine types
   module PPM,
@@ -60,7 +61,9 @@ module PE.Parser (
   -- *** Export Directory Table
   module PPEDT,
   -- *** Import Directory Table
-  module PPIDT
+  module PPIDT,
+  -- * Exceptions
+  PEException(..)
   ) where
 
 import           Control.Monad ( replicateM, unless )

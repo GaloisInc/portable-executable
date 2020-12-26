@@ -31,16 +31,26 @@ module PE.Parser (
   PEHeaderInfo(..),
   parsePEHeaderInfo,
   ppPEHeaderInfo,
+  -- ** Top-level header structures
   DOSHeader(..),
   PEHeader(..),
   ppPEHeader,
   PEOptionalHeader(..),
+  -- ** Architecture size handling
   PPW.PEClass(..),
-  PPS.SectionHeader(..),
-  PPS.sectionHeaderNameText,
-  Section(..),
-  getSection,
-  PPW.PEWord
+  PPW.PEWord,
+  -- ** Data Directories
+  DataDirectoryEntry(..),
+  parseDataDirectoryEntry,
+  ppDataDirectoryEntry,
+  -- ** Sections
+  module PPS,
+  -- ** Pre-defined machine types
+  module PPM,
+  -- ** Subsystems
+  module PPSu,
+  -- ** Characteristics
+  module PPC
   ) where
 
 import           Control.Monad ( guard, replicateM, unless )

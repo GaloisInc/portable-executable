@@ -7,6 +7,7 @@ module PE.Parser.SectionHeader (
   sectionHeaderNameText,
   parseSectionHeader,
   ppSectionHeader,
+  sectionContains,
   -- * Flags
   SectionFlags,
   SectionFlag,
@@ -100,6 +101,12 @@ sectionHeaderNameText h =
   TE.decodeUtf8With TE.lenientDecode bs
   where
     bs = BS.pack (PV.toList (sectionHeaderName h))
+
+sectionContains :: Word32 -> SectionHeader -> Bool
+sectionContains addr hdr = addr >= secStart && addr < secEnd
+  where
+    secStart = sectionHeaderVirtualAddress hdr
+    secEnd = secStart + sectionHeaderVirtualSize hdr
 
 ppSectionHeader :: SectionHeader -> PP.Doc ann
 ppSectionHeader hdr =

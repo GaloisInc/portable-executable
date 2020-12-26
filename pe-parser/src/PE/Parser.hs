@@ -46,6 +46,7 @@ module PE.Parser (
   DataDirectoryEntryName(..),
   -- ** Sections
   module PPS,
+  Section(..),
   getSection,
   getExportDirectoryTable,
   -- ** Pre-defined machine types

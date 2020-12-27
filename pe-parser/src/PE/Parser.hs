@@ -52,8 +52,8 @@ module PE.Parser (
   -- ** Subsystems
   module PPSu,
   -- ** Flags
-  -- *** Characteristics
-  module PPC,
+  -- *** File Flags
+  module PPFF,
   -- *** DLL Flags
   module PPDLL,
   -- ** Directory Entries
@@ -84,7 +84,7 @@ import           Data.Word ( Word16, Word32 )
 import qualified Prettyprinter as PP
 
 import           PE.Parser.BaseRelocation as PPBR
-import           PE.Parser.Characteristics as PPC
+import           PE.Parser.FileFlags as PPFF
 import           PE.Parser.DLLFlags as PPDLL
 import           PE.Parser.DataDirectoryEntry as PPDDE
 import           PE.Parser.ExceptionTable as PPET

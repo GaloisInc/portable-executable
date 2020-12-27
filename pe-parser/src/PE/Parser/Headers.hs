@@ -21,13 +21,13 @@ import           Control.Monad ( replicateM, unless )
 import qualified Data.Binary.Get as G
 import           Data.Char ( ord )
 import           Data.Maybe ( mapMaybe )
+import qualified Data.Parameterized.NatRepr as PN
 import           Data.Parameterized.Some ( Some(..) )
 import qualified Data.Parameterized.Vector as PV
 import           Data.Word ( Word8, Word16, Word32 )
 import qualified Prettyprinter as PP
 
-import qualified Data.Parameterized.NatRepr as PN
-import qualified PE.Parser.Characteristics as PPC
+import qualified PE.Parser.FileFlags as PPFF
 import qualified PE.Parser.DLLFlags as PPDLL
 import qualified PE.Parser.DataDirectoryEntry as PPDDE
 import qualified PE.Parser.Machine as PPM
@@ -82,7 +82,7 @@ data PEHeader =
            -- ^ The file offset of the COFF symbol table (zero if there is no
            -- COFF symbol table)
            --
-           -- NOTE: COFF symbol tables are deprecated, so this should be zero
+           -- NOTE: COFF symbol tables are deprecated, so tphis should be zero
            , peHeaderNumberOfSymbols :: Word32
            -- ^ The number of entries in the COFF symbol table
            --
@@ -90,7 +90,7 @@ data PEHeader =
            -- (but this information must be preserved to compute the offset of
            -- the string table)
            , peHeaderSizeOfOptionalHeader :: Word16
-           , peHeaderCharacteristics :: PPC.Characteristics
+           , peHeaderFileFlags :: PPFF.FileFlags
            }
   deriving (Show)
 
@@ -102,7 +102,7 @@ ppPEHeader h =
           , PP.pretty "Pointer to COFF Symbol Table (deprecated): " <> PP.pretty (peHeaderPointerToSymbolTable h)
           , PP.pretty "Number of COFF symbols (deprecated): " <> PP.pretty (peHeaderNumberOfSymbols h)
           , PP.pretty "Size of PE Optional Header: " <> PPP.ppBytes (peHeaderSizeOfOptionalHeader h)
-          , PP.pretty "Characteristics: " <> PPC.ppCharacteristics (peHeaderCharacteristics h)
+          , PP.pretty "FileFlags: " <> PPFF.ppFileFlags (peHeaderFileFlags h)
           ]
 
 parsePEHeader :: G.Get PEHeader
@@ -122,7 +122,7 @@ parsePEHeader = do
   stPtr <- G.getWord32le
   numSymbols <- G.getWord32le
   optHeaderSize <- G.getWord16le
-  ch <- PPC.parseCharacteristics
+  ch <- PPFF.parseFileFlags
 
   return PEHeader { peHeaderMachine = m
                   , peHeaderNumberOfSections = numSections
@@ -130,7 +130,7 @@ parsePEHeader = do
                   , peHeaderPointerToSymbolTable = stPtr
                   , peHeaderNumberOfSymbols = numSymbols
                   , peHeaderSizeOfOptionalHeader = optHeaderSize
-                  , peHeaderCharacteristics = ch
+                  , peHeaderFileFlags = ch
                   }
 
 -- | The "Optional" PE Header

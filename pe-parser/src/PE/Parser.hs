@@ -7,6 +7,7 @@
 {-# LANGUAGE TypeApplications #-}
 {-# LANGUAGE TypeFamilies #-}
 {-# LANGUAGE TypeOperators #-}
+{-# LANGUAGE TypeSynonymInstances #-}
 {-# LANGUAGE UndecidableInstances #-}
 -- | This library implements a parser for the Portable Executable format
 --
@@ -25,8 +26,14 @@
 -- * Un-parsed data should be preserved so that it can be reproduced into a new PE file as losslessly as possible
 --
 -- Note that Portable Executable container values are always Little Endian (even if code/data are Big Endian)
+--
+-- Important concepts in the Portable Executable format:
+--
+-- * Image Base
+-- * Relative Virtual Addresses
+-- * 'PEWord' size
 module PE.Parser (
-  -- * Headers
+  -- * Top-level API
   decodePEHeaderInfo,
   validatePEHeaderInfo,
   PEHeaderInfo(..),
@@ -34,19 +41,19 @@ module PE.Parser (
   ppPEHeaderInfo,
   -- ** Top-level header structures
   module PPH,
-  -- ** Architecture size handling
-  PPW.PEClass(..),
-  PPW.PEWord,
-  -- ** Data Directories
-  module PPDDE,
   -- ** Sections
   module PPS,
   Section(..),
   getSection,
+  -- ** Data Directories
+  module PPDDE,
   HasDataDirectoryEntry(..),
   getDataDirectoryEntry,
   SomeDataDirectoryEntry(..),
   allDataDirectoryEntries,
+  -- ** Architecture size handling
+  PPW.PEClass(..),
+  PPW.PEWord,
   -- ** Pre-defined machine types
   module PPM,
   -- ** Subsystems
@@ -123,15 +130,28 @@ parseSectionTable numEntries = replicateM (fromIntegral numEntries) PPS.parseSec
 -- bytestring.
 data PEHeaderInfo f w =
   PEHeaderInfo { dosHeader :: PPH.DOSHeader
+               -- ^ The legacy DOS header; the contents are mostly ignored
+               -- except for verifying the signature and the pointer to the
+               -- actual 'PPH.PEHeader'
                , peHeader :: PPH.PEHeader
+               -- ^ The required 'PPH.PEHeader', which contains basic
+               -- information about the binary
                , peOptionalHeader :: f (PPH.PEOptionalHeader w)
+               -- ^ The 'PPH.PEOptionalHeader', which is only optional for
+               -- object files.
                , peSectionHeaders :: [PPS.SectionHeader]
+               -- ^ Parsed 'PPS.SectionHeader's
                , peContents :: BSL.ByteString
+               -- ^ The original contents from which the 'PEHeaderInfo' was
+               -- parsed; this is retained so that later decoding passes always
+               -- reference the correct 'BSL.ByteString'
                }
 
 deriving instance (Show (f (PPH.PEOptionalHeader w))) => Show (PEHeaderInfo f w)
 
-
+-- | Pretty print a 'PEHeaderInfo'
+--
+-- Note that this prints the 'PPH.PEOptionalHeader' if it is present
 ppPEHeaderInfo :: PEHeaderInfo Maybe w -> PP.Doc ann
 ppPEHeaderInfo phi =
   PP.vsep [ PPH.ppPEHeader (peHeader phi)
@@ -146,6 +166,7 @@ ppPEHeaderInfo phi =
               , PP.indent 4 (PPS.ppSectionHeader shdr)
               ]
 
+-- | Parse a single 'PEHeaderInfo'
 parsePEHeaderInfo :: BSL.ByteString -> G.Get (Some (PEHeaderInfo Maybe))
 parsePEHeaderInfo contents = do
   -- We record the initial offset, as the PEOffset within the DOS header is
@@ -181,14 +202,38 @@ parsePEHeaderInfo contents = do
                              }
       return (Some hdr)
 
-
-decodePEHeaderInfo :: BSL.ByteString -> Either (Int64, String) (Some (PEHeaderInfo Maybe))
+-- | Decode a 'BSL.ByteString' into a 'PEHeaderInfo'
+--
+-- There are a few parsing failures that can occur here.  Some failures arise
+-- when correlated values (e.g., duplicate claims of object sizes) do not match.
+-- The 'PEHeaderInfo' type is parameterized by a "container".  This parser
+-- returns a 'Maybe' as the container, as there is no guarantee that the PE
+-- Optional Header is present.  In particular, object files often elide the
+-- Optional Header.
+--
+-- The error case reports the offset at which the error occurred in the byte
+-- stream, along with a descriptive message.
+decodePEHeaderInfo :: BSL.ByteString
+                   -> Either (Int64, String) (Some (PEHeaderInfo Maybe))
 decodePEHeaderInfo bs =
   case G.runGetOrFail (parsePEHeaderInfo bs) bs of
     Left (_, off, msg) -> Left (off, msg)
     Right (_, _, phi) -> Right phi
 
-validatePEHeaderInfo :: PEHeaderInfo Maybe w -> Either (PEHeaderInfo (FC.Const ()) w) (PEHeaderInfo FI.Identity w)
+-- | Traverse a 'PEHeaderInfo' and resolve the 'Maybe' field
+--
+-- * In the 'Left' case, there is no PE Optional Header and the slot is filled in
+--   by a dummy @'FC.Const' ()@ as a static proof that it is not present.
+--
+-- * In the 'Right' case, there is a PE Optional Header; it is held in a
+--   'FI.Identity' wrapper to prove that it is always present.
+--
+-- This function is useful to examine binaries when the Optional Header is
+-- expected.  Some of the functions for deeper inspection of binaries require
+-- the 'FI.Identity' version of the 'PEHeaderInfo' to prove that the header is
+-- present (e.g., for inspecting Data Directory entries).
+validatePEHeaderInfo :: PEHeaderInfo Maybe w
+                     -> Either (PEHeaderInfo (FC.Const ()) w) (PEHeaderInfo FI.Identity w)
 validatePEHeaderInfo phi =
   case peOptionalHeader phi of
     Just optHdr ->
@@ -206,14 +251,24 @@ validatePEHeaderInfo phi =
                         , peContents = peContents phi
                         }
 
+-- | The contents of a decoded section
 data Section =
   Section { sectionHeader :: PPS.SectionHeader
+          -- ^ The section header
           , sectionContents :: BSL.ByteString
+          -- ^ The raw section contents
+          --
+          -- This data is uninterpreted
           }
 
 -- | Look up the contents of a 'Section'
 --
+-- Note that the 'PPS.SectionHeader' should come from the same 'PEHeaderInfo'
+--
 -- This could fail if the data is missing from the underlying bytestring
+--
+-- FIXME: This could be safer if the 'PPS.SectionHeader' had a type parameter to
+-- tie it to the header info (and also connect it to the sections)
 getSection :: (X.MonadThrow m) => PEHeaderInfo f w -> PPS.SectionHeader -> m Section
 getSection phi secHeader = do
   if BSL.length content == fromIntegral (PPS.sectionHeaderSizeOfRawData secHeader)
@@ -225,9 +280,7 @@ getSection phi secHeader = do
     prefix = BSL.drop (fromIntegral (PPS.sectionHeaderPointerToRawData secHeader)) (peContents phi)
     content = BSL.take (fromIntegral (PPS.sectionHeaderSizeOfRawData secHeader)) prefix
 
-data Warning = Warning
-  deriving (Show)
-
+-- | Errors that can occur while decoding sections or data directory entries
 data PEException = MissingDirectoryEntry (Some PPDDE.DataDirectoryEntryName)
                  -- ^ The named 'DataDirectoryEntry' is not present in the file (the table entry is missing or zero)
                  | DirectoryEntryAddressNotMapped [PPS.SectionHeader] PPDDE.DataDirectoryEntry
@@ -242,28 +295,32 @@ data PEException = MissingDirectoryEntry (Some PPDDE.DataDirectoryEntryName)
 
 instance X.Exception PEException
 
+-- | This class provides a uniform interface for parsing Data Directory Entires
+-- into their actual values (usually a table of some sort)
+--
+-- Users should probably not need this (though 'ppDataDirectoryEntryValue' could be useful)
 class HasDataDirectoryEntry (entry :: PPDDE.DataDirectoryEntryKind) where
   type DataDirectoryEntryType entry :: Type
   dataDirectoryEntryParser :: proxy entry -> PPH.PEHeader -> Word32 -> G.Get (DataDirectoryEntryType entry)
   ppDataDirectoryEntryValue :: proxy entry -> DataDirectoryEntryType entry -> PP.Doc ann
 
-instance HasDataDirectoryEntry 'PPDDE.ExportTableK where
-  type DataDirectoryEntryType 'PPDDE.ExportTableK = PPEDT.ExportDirectoryTable
+instance HasDataDirectoryEntry PPDDE.ExportTableK where
+  type DataDirectoryEntryType PPDDE.ExportTableK = PPEDT.ExportDirectoryTable
   dataDirectoryEntryParser _ _ _ = PPEDT.parseExportDirectoryTable
   ppDataDirectoryEntryValue _ = PPEDT.ppExportDirectoryTable
 
-instance HasDataDirectoryEntry 'PPDDE.ImportTableK where
-  type DataDirectoryEntryType 'PPDDE.ImportTableK = PPIDT.ImportDirectoryTable
+instance HasDataDirectoryEntry PPDDE.ImportTableK where
+  type DataDirectoryEntryType PPDDE.ImportTableK = PPIDT.ImportDirectoryTable
   dataDirectoryEntryParser _ _ _ = PPIDT.parseImportDirectoryTable
   ppDataDirectoryEntryValue _ = PPIDT.ppImportDirectoryTable
 
-instance HasDataDirectoryEntry 'PPDDE.BaseRelocationTableK where
-  type DataDirectoryEntryType 'PPDDE.BaseRelocationTableK = PPBR.BaseRelocationBlock
+instance HasDataDirectoryEntry PPDDE.BaseRelocationTableK where
+  type DataDirectoryEntryType PPDDE.BaseRelocationTableK = PPBR.BaseRelocationBlock
   dataDirectoryEntryParser _ _ _ = PPBR.parseBaseRelocationBlock
   ppDataDirectoryEntryValue _ = PPBR.ppBaseRelocationBlock
 
-instance HasDataDirectoryEntry 'PPDDE.ExceptionTableK where
-  type DataDirectoryEntryType 'PPDDE.ExceptionTableK = PPET.ExceptionTable
+instance HasDataDirectoryEntry PPDDE.ExceptionTableK where
+  type DataDirectoryEntryType PPDDE.ExceptionTableK = PPET.ExceptionTable
   dataDirectoryEntryParser _ = PPET.parseExceptionTable
   ppDataDirectoryEntryValue _ = PPET.ppExceptionTable
 
@@ -303,7 +360,7 @@ getDataDirectoryEntry :: forall entry w m
 getDataDirectoryEntry dirEntryName phi = do
   let optHeader = FI.runIdentity (peOptionalHeader phi)
   let entries = PPH.peOptionalHeaderIndexDirectoryEntries optHeader
-  case F.find (PPDDE.isDirectoryEntry dirEntryName) entries of
+  case F.find (PPDDE.isDataDirectoryEntry dirEntryName) entries of
     Nothing -> X.throwM (MissingDirectoryEntry (Some dirEntryName))
     Just (_, dde) -> do
       let secHeaders = peSectionHeaders phi

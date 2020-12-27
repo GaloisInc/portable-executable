@@ -52,9 +52,14 @@ data DOSHeader =
   DOSHeader { dosHeaderContents :: PV.Vector 58 Word8
             -- ^ The DOS header contents (except for the signature bytes and the PE header offset)
             , dosHeaderPEOffset :: Word32
+            -- ^ The offset from the /start of the file/ of the 'PEHeader'
             }
   deriving (Show)
 
+-- | Parse a single 'DOSHeader'
+--
+-- This fails (safely, via 'fail' in the 'G.Get' monad) if the signature does
+-- not match the expected ASCII "MZ".
 parseDOSHeader :: G.Get DOSHeader
 parseDOSHeader = do
   sig1 <- G.getWord8
@@ -72,9 +77,14 @@ parseDOSHeader = do
 dosHeaderSize :: Word32
 dosHeaderSize = 64
 
+-- | The basic PE file header
+--
+-- This is the mandatory header present in every PE file.
 data PEHeader =
   PEHeader { peHeaderMachine :: PPM.Machine
+           -- ^ The tag describing the architecture of the machine
            , peHeaderNumberOfSections :: Word16
+           -- ^ The number of sections (which occur after the PE Optional Header)
            , peHeaderTimeDateStamp :: Word32
            -- ^ The low 32 bits of the number of seconds since the unix epoch
            -- that the PE file was created at
@@ -90,10 +100,16 @@ data PEHeader =
            -- (but this information must be preserved to compute the offset of
            -- the string table)
            , peHeaderSizeOfOptionalHeader :: Word16
+           -- ^ The number of bytes in the PE Optional Header (which is variable
+           -- given that the set of data directory entries is extensible)
            , peHeaderFileFlags :: PPFF.FileFlags
+           -- ^ Flags describing the features of the PE file
            }
   deriving (Show)
 
+-- | Pretty print the fields of the mandatory 'PEHeader'
+--
+-- This prints only the fields (with no indentation).
 ppPEHeader :: PEHeader -> PP.Doc ann
 ppPEHeader h =
   PP.vsep [ PP.pretty "Machine: " <> PPM.ppMachine (peHeaderMachine h)
@@ -105,6 +121,10 @@ ppPEHeader h =
           , PP.pretty "FileFlags: " <> PPFF.ppFileFlags (peHeaderFileFlags h)
           ]
 
+-- | Parse a single copy of the mandatory 'PEHeader'
+--
+-- This can fail (safely via the 'fail' method in the 'G.Get' monad) if the
+-- signature is invalid (expected: PE\0\0).
 parsePEHeader :: G.Get PEHeader
 parsePEHeader = do
   -- Verify the PE signature, which should be here
@@ -146,15 +166,24 @@ data PEOptionalHeader w =
                    -- parameter @w@; it is not actually part of the structure on
                    -- disk (though it is derived from the signature)
                    , peOptionalHeaderMajorLinkerVersion :: Word8
+                   -- ^ The major version of the linker used to create the file
                    , peOptionalHeaderMinorLinkerVersion :: Word8
+                   -- ^ The minor version of the linker used to create the file
                    , peOptionalHeaderSizeOfCode :: Word32
+                   -- ^ The number of bytes of the .text section
                    , peOptionalHeaderSizeOfInitializedData :: Word32
+                   -- ^ The number of bytes of initialized data in the .data section
                    , peOptionalHeaderSizeOfUninitializedData :: Word32
+                   -- ^ The number of bytes of uninitialized data
+                   -- (zero-initialized) in the .data section
                    , peOptionalHeaderAddressOfEntryPoint :: Word32
-                   -- ^ Note that this is known as the Relative Virtual Address
-                   -- (RVA), and is an offset from the load location of the
-                   -- executable/module if ASLR is enabled (hence being 32 bits
-                   -- instead of the word size).
+                   -- ^ The address of the entry point, if any; note that object
+                   -- files and DLLs do not require entry points.
+                   --
+                   -- Note that this is a Relative Virtual Address (RVA), and is
+                   -- an offset from the load location of the executable/module
+                   -- if ASLR is enabled (hence being 32 bits instead of the
+                   -- word size).
                    , peOptionalHeaderBaseOfCode :: Word32
                    -- ^ The RVA of the start of the code section
                    , peOptionalHeaderBaseOfData :: Word32
@@ -168,24 +197,53 @@ data PEOptionalHeader w =
                    -- will be memory-mapped (presumably when executable-level
                    -- ASLR is not enabled)
                    , peOptionalHeaderSectionAlignment :: Word32
+                   -- ^ The alignment of sections in memory, which must be
+                   -- greater than or equal to the file alignment
                    , peOptionalHeaderFileAlignment :: Word32
+                   -- ^ The alignment of sections in the file (i.e., offset).
+                   --
+                   -- This must be a power of two.  The default is 512.  If it
+                   -- is less than the page size, it must equal the section
+                   -- alignment.
                    , peOptionalHeaderMajorOperatingSystemVersion :: Word16
+                   -- ^ The required major OS version
                    , peOptionalHeaderMinorOperatingSystemVersion :: Word16
+                   -- ^ The required minor OS version
                    , peOptionalHeaderMajorImageVersion :: Word16
+                   -- ^ The major version of the image
                    , peOptionalHeaderMinorImageVersion :: Word16
+                   -- ^ The minor version of the image
                    , peOptionalHeaderMajorSubsystemVersion :: Word16
+                   -- ^ The major version of the subsystem
                    , peOptionalHeaderMinorSubsystemVersion :: Word16
+                   -- ^ The minor version of the subsystem
                    , peOptionalHeaderWin32VersionValue :: Word32
+                   -- ^ Reserved, must be zero
                    , peOptionalHeaderSizeOfImage :: Word32
+                   -- ^ The size in bytes of the image (including all headers).
+                   --
+                   -- This is required to be a multiple of the section alignment
                    , peOptionalHeaderSizeOfHeaders :: Word32
+                   -- ^ The sum of the sizes of the DOS header, PE headers, and
+                   -- section headers (rounded up to the nearest multiple of the
+                   -- file alignment)
                    , peOptionalHeaderChecksum :: Word32
+                   -- ^ A checksum of the image (checked for some system DLLs)
                    , peOptionalHeaderSubsystem :: PPSu.Subsystem
+                   -- ^ The subsystem that this image targets (e.g., Windows CLI
+                   -- or Windows GUI)
                    , peOptionalHeaderDLLCharacteristics :: PPDLL.DLLFlags
+                   -- ^ Flags for the features used by this DLL, if applicable
                    , peOptionalHeaderSizeOfStackReserve :: PPW.PEWord w
+                   -- ^ Number of bytes of memory reserved for the stack
                    , peOptionalHeaderSizeOfStackCommit :: PPW.PEWord w
+                   -- ^ Number of bytes of memory initially committed for the stack
                    , peOptionalHeaderSizeOfHeapReserve :: PPW.PEWord w
+                   -- ^ Number of bytes of heap memory to reserve
                    , peOptionalHeaderSizeOfHeapCommit :: PPW.PEWord w
+                   -- ^ Number of bytes of heap memory initially committed
                    , peOptionalHeaderLoaderFlags :: Word32
+                   -- ^ Reserved (must be zero)
                    , peOptionalHeaderDataDirectory :: [PPDDE.DataDirectoryEntry]
                    -- ^ Note: The on-disk file actually has a number of entries
                    -- here; the header parser parses them all out
@@ -200,6 +258,10 @@ data PEOptionalHeader w =
 
 deriving instance (PPW.PEConstraints w) => Show (PEOptionalHeader w)
 
+-- | Pretty print the 'PEOptionalHeader'
+--
+-- This includes the Data Directory entries, which require the
+-- 'PPS.SectionHeader's to fully interpret
 ppPEOptionalHeader :: [PPS.SectionHeader] -> PEOptionalHeader w -> PP.Doc ann
 ppPEOptionalHeader secHeaders oh = PPW.withPEConstraints (peOptionalHeaderClass oh) $
   PP.vsep [ PP.pretty "PE Format: " <> PPW.ppPEClass (peOptionalHeaderClass oh)
@@ -230,11 +292,28 @@ ppPEOptionalHeader secHeaders oh = PPW.withPEConstraints (peOptionalHeaderClass 
           , PP.indent 4 (PP.vcat (mapMaybe (PPDDE.ppDataDirectoryEntry secHeaders) (peOptionalHeaderIndexDirectoryEntries oh)))
           ]
 
+-- | Pair up each 'PPDDE.DataDirectoryEntry' with its corresponding 'PPDDE.DataDirectoryEntryName'
+--
+-- Data directory entries are identified by their index into the data directory
+-- entry table (with absent entries being zeroed out).  This assigns the names
+-- to each entry for easier interpretation.
 peOptionalHeaderIndexDirectoryEntries :: PEOptionalHeader w -> [(Some PPDDE.DataDirectoryEntryName, PPDDE.DataDirectoryEntry)]
 peOptionalHeaderIndexDirectoryEntries oh =
   zip PPDDE.allDataDirectoryEntryNames (peOptionalHeaderDataDirectory oh)
 
-parsePEOptionalHeader :: Word16 -> G.Get (Some PEOptionalHeader)
+-- | Parse a single 'PEOptionalHeader'
+--
+-- The pointer size is encoded in the 'PPW.PEClass', but quantified out in the
+-- return value because we can't determine it until we read the signature.
+--
+-- This function can fail (safely via 'fail' in 'G.Get') if:
+--
+-- * The signature is not recognized (only PE32 and PE32+ are supported)
+-- * The size declared in the 'PEHeader' does not match its actual size (implied
+--   by the count of data directory entries)
+parsePEOptionalHeader :: Word16
+                      -- ^ The size of the PE Optional Header declared in the 'PEHeader'
+                      -> G.Get (Some PEOptionalHeader)
 parsePEOptionalHeader optHeaderSize = do
   -- Parse the 2 byte signature and decide if this is a PE32 (0x10b) or a PE64 (0x20b)
   sig <- G.getWord16le
@@ -243,6 +322,8 @@ parsePEOptionalHeader optHeaderSize = do
     0x20b -> Some <$> parsePEOptionalHeaderAs optHeaderSize PPW.PEClass64
     _ -> PPP.failDoc (PP.pretty "Unexpected PE Optional Header signature: " <> PPP.ppHex sig)
 
+-- | Parse a single 'PEOptionalHeader' given the determined 'PPW.PEClass' (which
+-- fixes the pointer size)
 parsePEOptionalHeaderAs :: (PPW.PEConstraints w) => Word16 -> PPW.PEClass w -> G.Get (PEOptionalHeader w)
 parsePEOptionalHeaderAs optHeaderSize peClass = do
   optHeaderStart <- G.bytesRead

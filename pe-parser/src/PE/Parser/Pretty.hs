@@ -2,11 +2,18 @@ module PE.Parser.Pretty (
   ppList,
   ppHex,
   ppVersion,
-  ppBytes
+  ppBytes,
+  failDoc
   ) where
 
+import qualified Control.Monad.Fail as MF
 import           Numeric ( showHex )
 import qualified Prettyprinter as PP
+import qualified Prettyprinter.Render.String as PPRS
+
+-- | A wrapper around 'MF.fail' that accepts formatted prettyprinter 'PP.Doc's
+failDoc :: (MF.MonadFail m) => PP.Doc ann -> m a
+failDoc d = MF.fail (PPRS.renderString (PP.layoutCompact d))
 
 ppList :: [PP.Doc a] -> PP.Doc a
 ppList = PP.brackets . PP.hsep . PP.punctuate PP.comma

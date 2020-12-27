@@ -33,10 +33,7 @@ module PE.Parser (
   parsePEHeaderInfo,
   ppPEHeaderInfo,
   -- ** Top-level header structures
-  DOSHeader(..),
-  PEHeader(..),
-  ppPEHeader,
-  PEOptionalHeader(..),
+  module PPH,
   -- ** Architecture size handling
   PPW.PEClass(..),
   PPW.PEWord,
@@ -48,6 +45,8 @@ module PE.Parser (
   getSection,
   HasDataDirectoryEntry(..),
   getDataDirectoryEntry,
+  SomeDataDirectoryEntry(..),
+  allDataDirectoryEntries,
   -- ** Pre-defined machine types
   module PPM,
   -- ** Subsystems
@@ -64,345 +63,38 @@ module PE.Parser (
   module PPIDT,
   -- *** Base Relocation Table
   module PPBR,
+  -- *** Exception Table
+  module PPET,
   -- * Exceptions
   PEException(..)
   ) where
 
-import           Control.Monad ( replicateM, unless )
+import           Control.Monad ( replicateM )
 import qualified Control.Monad.Catch as X
-import qualified Control.Monad.Fail as MF
 import qualified Data.Binary.Get as G
 import qualified Data.ByteString.Lazy as BSL
-import           Data.Char ( ord )
 import qualified Data.Foldable as F
 import qualified Data.Functor.Const as FC
 import qualified Data.Functor.Identity as FI
 import           Data.Int ( Int64 )
 import           Data.Kind ( Type )
-import           Data.Maybe ( mapMaybe )
-import qualified Data.Parameterized.NatRepr as PN
 import           Data.Parameterized.Some ( Some(..) )
-import qualified Data.Parameterized.Vector as PV
 import           Data.Proxy ( Proxy(..) )
-import           Data.Word ( Word8, Word16, Word32 )
+import           Data.Word ( Word16, Word32 )
 import qualified Prettyprinter as PP
-import qualified Prettyprinter.Render.String as PPRS
 
-import qualified PE.Parser.BaseRelocation as PPBR
-import qualified PE.Parser.Characteristics as PPC
-import qualified PE.Parser.DLLFlags as PPDLL
-import qualified PE.Parser.DataDirectoryEntry as PPDDE
-import qualified PE.Parser.ExportDirectoryTable as PPEDT
-import qualified PE.Parser.ImportDirectoryTable as PPIDT
-import qualified PE.Parser.Machine as PPM
-import qualified PE.Parser.Pretty as PPP
-import qualified PE.Parser.PEWord as PPW
-import qualified PE.Parser.SectionHeader as PPS
-import qualified PE.Parser.Subsystem as PPSu
-import qualified PE.Parser.Vector as PPV
-
--- | A wrapper around 'MF.fail' that accepts formatted prettyprinter 'PP.Doc's
-failDoc :: (MF.MonadFail m) => PP.Doc ann -> m a
-failDoc d = MF.fail (PPRS.renderString (PP.layoutCompact d))
-
--- | The DOS header is the first 64 bytes of the file
---
--- There are two relevant bits of information:
---
--- * The first two bytes are 0x4d 0x5a (in ASCII: MZ)
--- * The last four bytes are an offset into the file (from the start) indicating the start of the PE header
---
--- This structure preserves the bytes between the signature and the offset (for
--- other analysis, if desired).  It does not store the signature.  The offset is
--- its own field (and needs to be appended to the freeform contents to rebuild a
--- DOSHeader).
-data DOSHeader =
-  DOSHeader { dosHeaderContents :: PV.Vector 58 Word8
-            -- ^ The DOS header contents (except for the signature bytes and the PE header offset)
-            , dosHeaderPEOffset :: Word32
-            }
-  deriving (Show)
-
-parseDOSHeader :: G.Get DOSHeader
-parseDOSHeader = do
-  sig1 <- G.getWord8
-  sig2 <- G.getWord8
-  unless (fromIntegral sig1 == ord 'M' && fromIntegral sig2 == ord 'Z') $ do
-    failDoc (PP.pretty "Invalid DOS Header signature: " <> PPP.ppList (fmap PPP.ppHex [sig1, sig2]))
-  -- This is passing 57, but actually gets 58 bytes due to how the types work out
-  bytes <- PPV.getVecN (PN.knownNat @57)
-  offset <- G.getWord32le
-  return DOSHeader { dosHeaderContents = bytes
-                   , dosHeaderPEOffset = offset
-                   }
-
--- | The total size of the 'DOSHeader' on disk/in the file
-dosHeaderSize :: Word32
-dosHeaderSize = 64
-
-data PEHeader =
-  PEHeader { peHeaderMachine :: PPM.Machine
-           , peHeaderNumberOfSections :: Word16
-           , peHeaderTimeDateStamp :: Word32
-           -- ^ The low 32 bits of the number of seconds since the unix epoch
-           -- that the PE file was created at
-           , peHeaderPointerToSymbolTable :: Word32
-           -- ^ The file offset of the COFF symbol table (zero if there is no
-           -- COFF symbol table)
-           --
-           -- NOTE: COFF symbol tables are deprecated, so this should be zero
-           , peHeaderNumberOfSymbols :: Word32
-           -- ^ The number of entries in the COFF symbol table
-           --
-           -- NOTE: COFF symbol tables are deprecated, so this should be zero
-           -- (but this information must be preserved to compute the offset of
-           -- the string table)
-           , peHeaderSizeOfOptionalHeader :: Word16
-           , peHeaderCharacteristics :: PPC.Characteristics
-           }
-  deriving (Show)
-
-ppPEHeader :: PEHeader -> PP.Doc ann
-ppPEHeader h =
-  PP.vsep [ PP.pretty "Machine: " <> PPM.ppMachine (peHeaderMachine h)
-          , PP.pretty "Section Count: " <> PP.pretty (peHeaderNumberOfSections h)
-          , PP.pretty "Timestamp: " <> PP.pretty (peHeaderTimeDateStamp h)
-          , PP.pretty "Pointer to COFF Symbol Table (deprecated): " <> PP.pretty (peHeaderPointerToSymbolTable h)
-          , PP.pretty "Number of COFF symbols (deprecated): " <> PP.pretty (peHeaderNumberOfSymbols h)
-          , PP.pretty "Size of PE Optional Header: " <> PPP.ppBytes (peHeaderSizeOfOptionalHeader h)
-          , PP.pretty "Characteristics: " <> PPC.ppCharacteristics (peHeaderCharacteristics h)
-          ]
-
-parsePEHeader :: G.Get PEHeader
-parsePEHeader = do
-  -- Verify the PE signature, which should be here
-  --
-  -- The signature is PE\0\0
-  p <- G.getWord8
-  e <- G.getWord8
-  z1 <- G.getWord8
-  z2 <- G.getWord8
-  unless (fromIntegral p == ord 'P' && fromIntegral e == ord 'E' && z1 == 0 && z2 == 0) $ do
-    failDoc (PP.pretty "Invalid PE Header signature: " <> PPP.ppList (fmap PPP.ppHex [p, e, z1, z2]))
-  m <- PPM.parseMachine
-  numSections <- G.getWord16le
-  timestamp <- G.getWord32le
-  stPtr <- G.getWord32le
-  numSymbols <- G.getWord32le
-  optHeaderSize <- G.getWord16le
-  ch <- PPC.parseCharacteristics
-
-  return PEHeader { peHeaderMachine = m
-                  , peHeaderNumberOfSections = numSections
-                  , peHeaderTimeDateStamp = timestamp
-                  , peHeaderPointerToSymbolTable = stPtr
-                  , peHeaderNumberOfSymbols = numSymbols
-                  , peHeaderSizeOfOptionalHeader = optHeaderSize
-                  , peHeaderCharacteristics = ch
-                  }
-
--- | The "Optional" PE Header
---
--- This isn't very optional most of the time, but it isn't clear that it is
--- always a required extension.  The @w@ parameter is a type-level nat that is
--- either 32 or 64, depending on the header version/target system.
---
--- It is optional for object files.
-data PEOptionalHeader w =
-  PEOptionalHeader { peOptionalHeaderClass :: PPW.PEClass w
-                   -- ^ This is a value-level representative of the type
-                   -- parameter @w@; it is not actually part of the structure on
-                   -- disk (though it is derived from the signature)
-                   , peOptionalHeaderMajorLinkerVersion :: Word8
-                   , peOptionalHeaderMinorLinkerVersion :: Word8
-                   , peOptionalHeaderSizeOfCode :: Word32
-                   , peOptionalHeaderSizeOfInitializedData :: Word32
-                   , peOptionalHeaderSizeOfUninitializedData :: Word32
-                   , peOptionalHeaderAddressOfEntryPoint :: Word32
-                   -- ^ Note that this is known as the Relative Virtual Address
-                   -- (RVA), and is an offset from the load location of the
-                   -- executable/module if ASLR is enabled (hence being 32 bits
-                   -- instead of the word size).
-                   , peOptionalHeaderBaseOfCode :: Word32
-                   -- ^ The RVA of the start of the code section
-                   , peOptionalHeaderBaseOfData :: Word32
-                   -- ^ The RVA of the start of the data section
-                   --
-                   -- NOTE: This field is *not* present in the header in the
-                   -- PE32+ (i.e., PE64) version of the header.  This struct
-                   -- will still have it, but with a value of zero.
-                   , peOptionalHeaderImageBase :: PPW.PEWord w
-                   -- ^ This is the full virtual address at which an executable
-                   -- will be memory-mapped (presumably when executable-level
-                   -- ASLR is not enabled)
-                   , peOptionalHeaderSectionAlignment :: Word32
-                   , peOptionalHeaderFileAlignment :: Word32
-                   , peOptionalHeaderMajorOperatingSystemVersion :: Word16
-                   , peOptionalHeaderMinorOperatingSystemVersion :: Word16
-                   , peOptionalHeaderMajorImageVersion :: Word16
-                   , peOptionalHeaderMinorImageVersion :: Word16
-                   , peOptionalHeaderMajorSubsystemVersion :: Word16
-                   , peOptionalHeaderMinorSubsystemVersion :: Word16
-                   , peOptionalHeaderWin32VersionValue :: Word32
-                   , peOptionalHeaderSizeOfImage :: Word32
-                   , peOptionalHeaderSizeOfHeaders :: Word32
-                   , peOptionalHeaderChecksum :: Word32
-                   , peOptionalHeaderSubsystem :: PPSu.Subsystem
-                   , peOptionalHeaderDLLCharacteristics :: PPDLL.DLLFlags
-                   , peOptionalHeaderSizeOfStackReserve :: PPW.PEWord w
-                   , peOptionalHeaderSizeOfStackCommit :: PPW.PEWord w
-                   , peOptionalHeaderSizeOfHeapReserve :: PPW.PEWord w
-                   , peOptionalHeaderSizeOfHeapCommit :: PPW.PEWord w
-                   , peOptionalHeaderLoaderFlags :: Word32
-                   , peOptionalHeaderDataDirectory :: [PPDDE.DataDirectoryEntry]
-                   -- ^ Note: The on-disk file actually has a number of entries
-                   -- here; the header parser parses them all out
-                   --
-                   -- Empty 'DataDirectoryEntries' are included because they are
-                   -- present in the on-disk file.  The position in the table is
-                   -- important, as each index corresponds to a specific table
-                   -- entry (see 'DataDirectoryEntryName' for supported values).
-                   -- This format is also useful, as it allows us to robustly
-                   -- parse unrecognized table values.
-                   }
-
-deriving instance (PPW.PEConstraints w) => Show (PEOptionalHeader w)
-
-ppPEOptionalHeaders :: [PPS.SectionHeader] -> PEOptionalHeader w -> PP.Doc ann
-ppPEOptionalHeaders secHeaders oh = PPW.withPEConstraints (peOptionalHeaderClass oh) $
-  PP.vsep [ PP.pretty "PE Format: " <> PPW.ppPEClass (peOptionalHeaderClass oh)
-          , PP.pretty "Linker Version: " <> PPP.ppVersion (peOptionalHeaderMajorLinkerVersion oh, peOptionalHeaderMinorLinkerVersion oh)
-          , PP.pretty "Size of code: " <> PPP.ppBytes (peOptionalHeaderSizeOfCode oh)
-          , PP.pretty "Size of Initialized data: " <> PPP.ppBytes (peOptionalHeaderSizeOfInitializedData oh)
-          , PP.pretty "Size of Uninitialized data: " <> PPP.ppBytes (peOptionalHeaderSizeOfUninitializedData oh)
-          , PP.pretty "Address of entry point: " <> PPP.ppHex (peOptionalHeaderAddressOfEntryPoint oh)
-          , PP.pretty "Base of Code: " <> PPP.ppHex (peOptionalHeaderBaseOfCode oh)
-          , PP.pretty "Base of Data: " <> PPP.ppHex (peOptionalHeaderBaseOfData oh)
-          , PP.pretty "Image Base: " <> PPP.ppHex (peOptionalHeaderImageBase oh)
-          , PP.pretty "Section Align: " <> PPP.ppHex (peOptionalHeaderSectionAlignment oh)
-          , PP.pretty "File Align: " <> PPP.ppHex (peOptionalHeaderFileAlignment oh)
-          , PP.pretty "OS Version: " <> PPP.ppVersion (peOptionalHeaderMajorOperatingSystemVersion oh, peOptionalHeaderMinorOperatingSystemVersion oh)
-          , PP.pretty "Image Version: " <> PPP.ppVersion (peOptionalHeaderMajorImageVersion oh, peOptionalHeaderMinorImageVersion oh)
-          , PP.pretty "Subsystem Version: " <> PPP.ppVersion (peOptionalHeaderMajorSubsystemVersion oh, peOptionalHeaderMinorSubsystemVersion oh)
-          , PP.pretty "Win32 Version: " <> PP.pretty (peOptionalHeaderWin32VersionValue oh)
-          , PP.pretty "Size of Image: " <> PPP.ppBytes (peOptionalHeaderSizeOfImage oh)
-          , PP.pretty "Size of Headers: " <> PPP.ppBytes (peOptionalHeaderSizeOfHeaders oh)
-          , PP.pretty "Subsystem: " <> PPSu.ppSubsystem (peOptionalHeaderSubsystem oh)
-          , PP.pretty "DLL Characteristics: " <> PPDLL.ppDLLFlags (peOptionalHeaderDLLCharacteristics oh)
-          , PP.pretty "Size of Stack Reserve: " <> PPP.ppBytes (peOptionalHeaderSizeOfStackReserve oh)
-          , PP.pretty "Size of Stack Commit: " <> PPP.ppBytes (peOptionalHeaderSizeOfStackCommit oh)
-          , PP.pretty "Size of Heap Reserve: " <> PPP.ppBytes (peOptionalHeaderSizeOfHeapReserve oh)
-          , PP.pretty "Size of Heap Commit: " <> PPP.ppBytes (peOptionalHeaderSizeOfHeapCommit oh)
-          , PP.pretty "Loader Flags: " <> PPP.ppHex (peOptionalHeaderLoaderFlags oh)
-          , PP.pretty "Data Directory"
-          , PP.indent 4 (PP.vcat (mapMaybe (PPDDE.ppDataDirectoryEntry secHeaders) (indexDirectoryEntries oh)))
-          ]
-
-indexDirectoryEntries :: PEOptionalHeader w -> [(Some PPDDE.DataDirectoryEntryName, PPDDE.DataDirectoryEntry)]
-indexDirectoryEntries oh =
-  zip PPDDE.allDataDirectoryEntryNames (peOptionalHeaderDataDirectory oh)
-
-parsePEOptionalHeader :: Word16 -> G.Get (Some PEOptionalHeader)
-parsePEOptionalHeader optHeaderSize = do
-  -- Parse the 2 byte signature and decide if this is a PE32 (0x10b) or a PE64 (0x20b)
-  sig <- G.getWord16le
-  case sig of
-    0x10b -> Some <$> parsePEOptionalHeaderAs optHeaderSize PPW.PEClass32
-    0x20b -> Some <$> parsePEOptionalHeaderAs optHeaderSize PPW.PEClass64
-    _ -> failDoc (PP.pretty "Unexpected PE Optional Header signature: " <> PPP.ppHex sig)
-
-parsePEOptionalHeaderAs :: (PPW.PEConstraints w) => Word16 -> PPW.PEClass w -> G.Get (PEOptionalHeader w)
-parsePEOptionalHeaderAs optHeaderSize peClass = do
-  optHeaderStart <- G.bytesRead
-
-  majorLinker <- G.getWord8
-  minorLinker <- G.getWord8
-  sizeOfCode <- G.getWord32le
-  sizeOfInitData <- G.getWord32le
-  sizeOfUninitData <- G.getWord32le
-  entryPoint <- G.getWord32le
-  baseOfCode <- G.getWord32le
-  baseOfData <- case peClass of
-    PPW.PEClass32 -> G.getWord32le
-    PPW.PEClass64 -> return 0
-  imageBase <- PPW.parsePEWord peClass
-  secAlign <- G.getWord32le
-  fileAlign <- G.getWord32le
-  majorOSVersion <- G.getWord16le
-  minorOSVersion <- G.getWord16le
-  majorImage <- G.getWord16le
-  minorImage <- G.getWord16le
-  majorSubsystem <- G.getWord16le
-  minorSubsystem <- G.getWord16le
-  win32Version <- G.getWord32le
-  sizeOfImage <- G.getWord32le
-  sizeOfHeaders <- G.getWord32le
-  checksum <- G.getWord32le
-  subsystem <- PPSu.parseSubsystem
-  dllChar <- PPDLL.parseDLLFlags
-  stackReserve <- PPW.parsePEWord peClass
-  stackCommit <- PPW.parsePEWord peClass
-  heapReserve <- PPW.parsePEWord peClass
-  heapCommit <- PPW.parsePEWord peClass
-  loaderFlags <- G.getWord32le
-  numRva <- G.getWord32le
-
-
-  -- Note: it is invalid to read more bytes than 'optHeaderSize', as that is the
-  -- ultimate arbiter of the size of this table.  If there is an inconsistency
-  -- between that and the size of the Data Directory, we can throw an error
-  -- here... but we might just want to make it a warning
-  dataEntries <- replicateM (fromIntegral numRva) PPDDE.parseDataDirectoryEntry
-
-  optHeaderEnd <- G.bytesRead
-
-  -- Here we are checking the consistency of the declared header size against
-  -- what we have actually parsed (given the value of 'numRva', which defines
-  -- the length of the variable bit of the headers.
-  --
-  -- Note that we have to add 2 because the two bytes of the signature are
-  -- actually parsed before this function (so that we can determine the size of
-  -- some fields)
-  unless (fromIntegral optHeaderSize == optHeaderEnd - optHeaderStart + 2) $ do
-    failDoc $ PP.hsep [ PP.pretty "The declared PE Optional Header size ("
-                      , PP.pretty optHeaderSize
-                      , PP.pretty ") does not match the actual size implied by the architecture and data directory entry count ("
-                      , PP.pretty (optHeaderEnd - optHeaderStart)
-                      , PP.pretty ") PE format is "
-                      , PPW.ppPEClass peClass
-                      ]
-
-  return PEOptionalHeader { peOptionalHeaderClass = peClass
-                          , peOptionalHeaderMajorLinkerVersion = majorLinker
-                          , peOptionalHeaderMinorLinkerVersion = minorLinker
-                          , peOptionalHeaderSizeOfCode = sizeOfCode
-                          , peOptionalHeaderSizeOfInitializedData = sizeOfInitData
-                          , peOptionalHeaderSizeOfUninitializedData = sizeOfUninitData
-                          , peOptionalHeaderAddressOfEntryPoint = entryPoint
-                          , peOptionalHeaderBaseOfCode = baseOfCode
-                          , peOptionalHeaderBaseOfData = baseOfData
-                          , peOptionalHeaderImageBase = imageBase
-                          , peOptionalHeaderSectionAlignment = secAlign
-                          , peOptionalHeaderFileAlignment = fileAlign
-                          , peOptionalHeaderMajorOperatingSystemVersion = majorOSVersion
-                          , peOptionalHeaderMinorOperatingSystemVersion = minorOSVersion
-                          , peOptionalHeaderMajorImageVersion = majorImage
-                          , peOptionalHeaderMinorImageVersion = minorImage
-                          , peOptionalHeaderMajorSubsystemVersion = majorSubsystem
-                          , peOptionalHeaderMinorSubsystemVersion = minorSubsystem
-                          , peOptionalHeaderWin32VersionValue = win32Version
-                          , peOptionalHeaderSizeOfImage = sizeOfImage
-                          , peOptionalHeaderSizeOfHeaders = sizeOfHeaders
-                          , peOptionalHeaderChecksum = checksum
-                          , peOptionalHeaderSubsystem = subsystem
-                          , peOptionalHeaderDLLCharacteristics = dllChar
-                          , peOptionalHeaderSizeOfStackReserve = stackReserve
-                          , peOptionalHeaderSizeOfStackCommit = stackCommit
-                          , peOptionalHeaderSizeOfHeapReserve = heapReserve
-                          , peOptionalHeaderSizeOfHeapCommit = heapCommit
-                          , peOptionalHeaderLoaderFlags = loaderFlags
-                          , peOptionalHeaderDataDirectory = dataEntries
-                          }
+import           PE.Parser.BaseRelocation as PPBR
+import           PE.Parser.Characteristics as PPC
+import           PE.Parser.DLLFlags as PPDLL
+import           PE.Parser.DataDirectoryEntry as PPDDE
+import           PE.Parser.ExceptionTable as PPET
+import           PE.Parser.ExportDirectoryTable as PPEDT
+import           PE.Parser.Headers as PPH
+import           PE.Parser.ImportDirectoryTable as PPIDT
+import           PE.Parser.Machine as PPM
+import           PE.Parser.PEWord as PPW
+import           PE.Parser.SectionHeader as PPS
+import           PE.Parser.Subsystem as PPSu
 
 
 parseSectionTable :: Word16 -> G.Get [PPS.SectionHeader]
@@ -430,21 +122,21 @@ parseSectionTable numEntries = replicateM (fromIntegral numEntries) PPS.parseSec
 -- second phase (parsing out section contents) is guaranteed to work on the same
 -- bytestring.
 data PEHeaderInfo f w =
-  PEHeaderInfo { dosHeader :: DOSHeader
-               , peHeader :: PEHeader
-               , peOptionalHeader :: f (PEOptionalHeader w)
+  PEHeaderInfo { dosHeader :: PPH.DOSHeader
+               , peHeader :: PPH.PEHeader
+               , peOptionalHeader :: f (PPH.PEOptionalHeader w)
                , peSectionHeaders :: [PPS.SectionHeader]
                , peContents :: BSL.ByteString
                }
 
-deriving instance (Show (f (PEOptionalHeader w))) => Show (PEHeaderInfo f w)
+deriving instance (Show (f (PPH.PEOptionalHeader w))) => Show (PEHeaderInfo f w)
 
 
 ppPEHeaderInfo :: PEHeaderInfo Maybe w -> PP.Doc ann
 ppPEHeaderInfo phi =
-  PP.vsep [ ppPEHeader (peHeader phi)
+  PP.vsep [ PPH.ppPEHeader (peHeader phi)
           -- FIXME: Add a header to mark out the optional headers
-          , maybe mempty (ppPEOptionalHeaders (peSectionHeaders phi)) (peOptionalHeader phi)
+          , maybe mempty (PPH.ppPEOptionalHeader (peSectionHeaders phi)) (peOptionalHeader phi)
           , PP.pretty "Sections:"
           , PP.indent 4 (PP.vsep (map ppsh (zip [0..] (peSectionHeaders phi))))
           ]
@@ -460,15 +152,15 @@ parsePEHeaderInfo contents = do
   -- relative to this number.  We could assume it to be zero, but this parser
   -- could in theory be run in some other context where it is not.
   initialOffset <- G.bytesRead
-  dh <- parseDOSHeader
-  G.skip (fromIntegral (dosHeaderPEOffset dh - dosHeaderSize - fromIntegral initialOffset))
+  dh <- PPH.parseDOSHeader
+  G.skip (fromIntegral (PPH.dosHeaderPEOffset dh - PPH.dosHeaderSize - fromIntegral initialOffset))
 
   -- Immediately followed by the PE Header (which checks the magic signature)
-  peh <- parsePEHeader
+  peh <- PPH.parsePEHeader
 
-  case peHeaderSizeOfOptionalHeader peh of
+  case PPH.peHeaderSizeOfOptionalHeader peh of
     0 -> do
-      secTable <- parseSectionTable (peHeaderNumberOfSections peh)
+      secTable <- parseSectionTable (PPH.peHeaderNumberOfSections peh)
       let hdr = PEHeaderInfo { dosHeader = dh
                              , peHeader = peh
                              , peOptionalHeader = Nothing
@@ -479,8 +171,8 @@ parsePEHeaderInfo contents = do
     optHeaderSize -> do
       -- Immediately followed by the PE Optional Header (which has its size
       -- quantified away because we can't know until we start parsing it)
-      Some peoh <- parsePEOptionalHeader optHeaderSize
-      secTable <- parseSectionTable (peHeaderNumberOfSections peh)
+      Some peoh <- PPH.parsePEOptionalHeader optHeaderSize
+      secTable <- parseSectionTable (PPH.peHeaderNumberOfSections peh)
       let hdr = PEHeaderInfo { dosHeader = dh
                              , peHeader = peh
                              , peOptionalHeader = Just peoh
@@ -552,19 +244,42 @@ instance X.Exception PEException
 
 class HasDataDirectoryEntry (entry :: PPDDE.DataDirectoryEntryKind) where
   type DataDirectoryEntryType entry :: Type
-  dataDirectoryEntryParser :: proxy entry -> G.Get (DataDirectoryEntryType entry)
+  dataDirectoryEntryParser :: proxy entry -> PPH.PEHeader -> Word32 -> G.Get (DataDirectoryEntryType entry)
+  ppDataDirectoryEntryValue :: proxy entry -> DataDirectoryEntryType entry -> PP.Doc ann
 
 instance HasDataDirectoryEntry 'PPDDE.ExportTableK where
   type DataDirectoryEntryType 'PPDDE.ExportTableK = PPEDT.ExportDirectoryTable
-  dataDirectoryEntryParser _ = PPEDT.parseExportDirectoryTable
+  dataDirectoryEntryParser _ _ _ = PPEDT.parseExportDirectoryTable
+  ppDataDirectoryEntryValue _ = PPEDT.ppExportDirectoryTable
 
 instance HasDataDirectoryEntry 'PPDDE.ImportTableK where
   type DataDirectoryEntryType 'PPDDE.ImportTableK = PPIDT.ImportDirectoryTable
-  dataDirectoryEntryParser _ = PPIDT.parseImportDirectoryTable
+  dataDirectoryEntryParser _ _ _ = PPIDT.parseImportDirectoryTable
+  ppDataDirectoryEntryValue _ = PPIDT.ppImportDirectoryTable
 
 instance HasDataDirectoryEntry 'PPDDE.BaseRelocationTableK where
   type DataDirectoryEntryType 'PPDDE.BaseRelocationTableK = PPBR.BaseRelocationBlock
-  dataDirectoryEntryParser _ = PPBR.parseBaseRelocationBlock
+  dataDirectoryEntryParser _ _ _ = PPBR.parseBaseRelocationBlock
+  ppDataDirectoryEntryValue _ = PPBR.ppBaseRelocationBlock
+
+instance HasDataDirectoryEntry 'PPDDE.ExceptionTableK where
+  type DataDirectoryEntryType 'PPDDE.ExceptionTableK = PPET.ExceptionTable
+  dataDirectoryEntryParser _ = PPET.parseExceptionTable
+  ppDataDirectoryEntryValue _ = PPET.ppExceptionTable
+
+-- | An existential wrapper around 'PPDE.DataDirectoryEntry' that captures the
+-- 'HasDataDirectoryEntry' constraint
+data SomeDataDirectoryEntry where
+  SomeDataDirectoryEntry :: (HasDataDirectoryEntry entry) => PPDDE.DataDirectoryEntryName entry -> SomeDataDirectoryEntry
+
+-- | All 'PPDE.DataDirectoryEntry' values that can be deeply inspected by this library
+allDataDirectoryEntries :: [SomeDataDirectoryEntry]
+allDataDirectoryEntries =
+  [ SomeDataDirectoryEntry PPDDE.ExportTableEntry
+  , SomeDataDirectoryEntry PPDDE.ImportTableEntry
+  , SomeDataDirectoryEntry PPDDE.BaseRelocationTableEntry
+  , SomeDataDirectoryEntry PPDDE.ExceptionTableEntry
+  ]
 
 -- | Parse the contents of the a 'PPDDE.DataDirectoryEntry' (given the name of
 -- that entry) from the file, if it is present.
@@ -587,7 +302,7 @@ getDataDirectoryEntry :: forall entry w m
                       -> m (DataDirectoryEntryType entry)
 getDataDirectoryEntry dirEntryName phi = do
   let optHeader = FI.runIdentity (peOptionalHeader phi)
-  let entries = indexDirectoryEntries optHeader
+  let entries = PPH.peOptionalHeaderIndexDirectoryEntries optHeader
   case F.find (PPDDE.isDirectoryEntry dirEntryName) entries of
     Nothing -> X.throwM (MissingDirectoryEntry (Some dirEntryName))
     Just (_, dde) -> do
@@ -598,7 +313,8 @@ getDataDirectoryEntry dirEntryName phi = do
           let offsetInSection = PPDDE.dataDirectoryEntryAddress dde - PPS.sectionHeaderVirtualAddress containingSection
           sec <- getSection phi containingSection
           let tableStart = BSL.drop (fromIntegral offsetInSection) (sectionContents sec)
-          case G.runGetOrFail (dataDirectoryEntryParser (Proxy @entry)) tableStart of
+          let parser = dataDirectoryEntryParser (Proxy @entry) (peHeader phi) (PPDDE.dataDirectoryEntrySize dde)
+          case G.runGetOrFail parser tableStart of
             Left (_, errOff, msg) -> X.throwM (DirectoryEntryParseFailure (Some dirEntryName) dde errOff msg)
             Right (_, _, edt) -> return edt
 

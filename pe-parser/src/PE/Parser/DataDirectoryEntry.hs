@@ -52,21 +52,21 @@ data DataDirectoryEntryKind = ExportTableK
 --
 -- These are in ordinal order (and that is important)
 data DataDirectoryEntryName entry where
-  ExportTable :: DataDirectoryEntryName 'ExportTableK
-  ImportTable :: DataDirectoryEntryName 'ImportTableK
-  ResourceTable :: DataDirectoryEntryName 'ResourceTableK
-  ExceptionTable :: DataDirectoryEntryName 'ExceptionTableK
-  CertificateTable :: DataDirectoryEntryName 'CertificateTableK
-  BaseRelocationTable :: DataDirectoryEntryName 'BaseRelocationTableK
-  Debug :: DataDirectoryEntryName 'DebugK
-  Architecture :: DataDirectoryEntryName 'ArchitectureK
-  GlobalPtr :: DataDirectoryEntryName 'GlobalPtrK
-  TLSTable :: DataDirectoryEntryName 'TLSTableK
-  LoadConfigTable :: DataDirectoryEntryName 'LoadConfigTableK
-  BoundImportTable :: DataDirectoryEntryName 'BoundImportTableK
-  ImportAddressTable :: DataDirectoryEntryName 'ImportAddressTableK
-  DelayImportDescriptor :: DataDirectoryEntryName 'DelayImportDescriptorK
-  CLRRuntimeHeader :: DataDirectoryEntryName 'CLRRuntimeHeaderK
+  ExportTableEntry :: DataDirectoryEntryName 'ExportTableK
+  ImportTableEntry :: DataDirectoryEntryName 'ImportTableK
+  ResourceTableEntry :: DataDirectoryEntryName 'ResourceTableK
+  ExceptionTableEntry :: DataDirectoryEntryName 'ExceptionTableK
+  CertificateTableEntry :: DataDirectoryEntryName 'CertificateTableK
+  BaseRelocationTableEntry :: DataDirectoryEntryName 'BaseRelocationTableK
+  DebugEntry :: DataDirectoryEntryName 'DebugK
+  ArchitectureEntry :: DataDirectoryEntryName 'ArchitectureK
+  GlobalPtrEntry :: DataDirectoryEntryName 'GlobalPtrK
+  TLSTableEntry :: DataDirectoryEntryName 'TLSTableK
+  LoadConfigTableEntry :: DataDirectoryEntryName 'LoadConfigTableK
+  BoundImportTableEntry :: DataDirectoryEntryName 'BoundImportTableK
+  ImportAddressTableEntry :: DataDirectoryEntryName 'ImportAddressTableK
+  DelayImportDescriptorEntry :: DataDirectoryEntryName 'DelayImportDescriptorK
+  CLRRuntimeHeaderEntry :: DataDirectoryEntryName 'CLRRuntimeHeaderK
 
 $(return [])
 
@@ -80,21 +80,21 @@ instance PC.TestEquality DataDirectoryEntryName where
 
 allDataDirectoryEntryNames :: [Some DataDirectoryEntryName]
 allDataDirectoryEntryNames =
-  [ Some ExportTable
-  , Some ImportTable
-  , Some ResourceTable
-  , Some ExceptionTable
-  , Some CertificateTable
-  , Some BaseRelocationTable
-  , Some Debug
-  , Some Architecture
-  , Some GlobalPtr
-  , Some TLSTable
-  , Some LoadConfigTable
-  , Some BoundImportTable
-  , Some ImportAddressTable
-  , Some DelayImportDescriptor
-  , Some CLRRuntimeHeader
+  [ Some ExportTableEntry
+  , Some ImportTableEntry
+  , Some ResourceTableEntry
+  , Some ExceptionTableEntry
+  , Some CertificateTableEntry
+  , Some BaseRelocationTableEntry
+  , Some DebugEntry
+  , Some ArchitectureEntry
+  , Some GlobalPtrEntry
+  , Some TLSTableEntry
+  , Some LoadConfigTableEntry
+  , Some BoundImportTableEntry
+  , Some ImportAddressTableEntry
+  , Some DelayImportDescriptorEntry
+  , Some CLRRuntimeHeaderEntry
   ]
 
 isDirectoryEntry :: DataDirectoryEntryName entry -> (Some DataDirectoryEntryName, a) -> Bool
@@ -103,21 +103,21 @@ isDirectoryEntry name (Some entryName, _) = isJust (PC.testEquality name entryNa
 ppDataDirectoryEntryName :: DataDirectoryEntryName entry -> PP.Doc ann
 ppDataDirectoryEntryName n =
   case n of
-    ExportTable -> PP.pretty "Export Table"
-    ImportTable -> PP.pretty "Import Table"
-    ResourceTable -> PP.pretty "Resource Table"
-    ExceptionTable -> PP.pretty "Exception Table"
-    CertificateTable -> PP.pretty "Certificate Table"
-    BaseRelocationTable -> PP.pretty "Base Relocation Table"
-    Debug -> PP.pretty "Debug"
-    Architecture -> PP.pretty "Architecture"
-    GlobalPtr -> PP.pretty "Global Ptr"
-    TLSTable -> PP.pretty "TLS Table"
-    LoadConfigTable -> PP.pretty "Load Config Table"
-    BoundImportTable -> PP.pretty "Bound Import Table"
-    ImportAddressTable -> PP.pretty "Import Address Table"
-    DelayImportDescriptor -> PP.pretty "Delay Import Descriptor"
-    CLRRuntimeHeader -> PP.pretty "CLR Runtime Header"
+    ExportTableEntry -> PP.pretty "Export Table"
+    ImportTableEntry -> PP.pretty "Import Table"
+    ResourceTableEntry -> PP.pretty "Resource Table"
+    ExceptionTableEntry -> PP.pretty "Exception Table"
+    CertificateTableEntry -> PP.pretty "Certificate Table"
+    BaseRelocationTableEntry -> PP.pretty "Base Relocation Table"
+    DebugEntry -> PP.pretty "Debug"
+    ArchitectureEntry -> PP.pretty "Architecture"
+    GlobalPtrEntry -> PP.pretty "Global Ptr"
+    TLSTableEntry -> PP.pretty "TLS Table"
+    LoadConfigTableEntry -> PP.pretty "Load Config Table"
+    BoundImportTableEntry -> PP.pretty "Bound Import Table"
+    ImportAddressTableEntry -> PP.pretty "Import Address Table"
+    DelayImportDescriptorEntry -> PP.pretty "Delay Import Descriptor"
+    CLRRuntimeHeaderEntry -> PP.pretty "CLR Runtime Header"
 
 parseDataDirectoryEntry :: G.Get DataDirectoryEntry
 parseDataDirectoryEntry = do

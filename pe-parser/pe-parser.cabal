@@ -19,7 +19,9 @@ library
                        PE.Parser.Characteristics
                        PE.Parser.DLLFlags
                        PE.Parser.DataDirectoryEntry
+                       PE.Parser.ExceptionTable
                        PE.Parser.ExportDirectoryTable
+                       PE.Parser.Headers
                        PE.Parser.ImportDirectoryTable
                        PE.Parser.Machine
                        PE.Parser.PEWord
@@ -34,7 +36,8 @@ library
                        exceptions >= 0.8 && < 0.11,
                        parameterized-utils >= 2 && < 3,
                        prettyprinter >= 1.7 && < 1.8,
-                       text >= 1 && < 2
+                       text >= 1 && < 2,
+                       vector >= 0.10 && < 0.13
   hs-source-dirs:      src
   default-language:    Haskell2010
   ghc-options:         -Wall -Wcompat
@@ -47,6 +50,7 @@ executable readpe
   build-depends:       pe-parser,
                        base,
                        bytestring,
+                       containers,
                        parameterized-utils,
                        prettyprinter,
                        optparse-applicative

@@ -62,6 +62,8 @@ module PE.Parser (
   module PPEDT,
   -- *** Import Directory Table
   module PPIDT,
+  -- *** Base Relocation Table
+  module PPBR,
   -- * Exceptions
   PEException(..)
   ) where
@@ -86,6 +88,7 @@ import           Data.Word ( Word8, Word16, Word32 )
 import qualified Prettyprinter as PP
 import qualified Prettyprinter.Render.String as PPRS
 
+import qualified PE.Parser.BaseRelocation as PPBR
 import qualified PE.Parser.Characteristics as PPC
 import qualified PE.Parser.DLLFlags as PPDLL
 import qualified PE.Parser.DataDirectoryEntry as PPDDE
@@ -558,6 +561,10 @@ instance GetDataDirectoryEntry 'PPDDE.ExportTableK where
 instance GetDataDirectoryEntry 'PPDDE.ImportTableK where
   type DataDirectoryEntryType 'PPDDE.ImportTableK = PPIDT.ImportDirectoryTable
   dataDirectoryEntryParser _ = PPIDT.parseImportDirectoryTable
+
+instance GetDataDirectoryEntry 'PPDDE.BaseRelocationTableK where
+  type DataDirectoryEntryType 'PPDDE.BaseRelocationTableK = PPBR.BaseRelocationBlock
+  dataDirectoryEntryParser _ = PPBR.parseBaseRelocationBlock
 
 -- | Parse the contents of the a 'PPDDE.DataDirectoryEntry' (given the name of
 -- that entry) from the file, if it is present.

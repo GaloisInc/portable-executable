@@ -15,7 +15,8 @@ extra-source-files:  CHANGELOG.md
 
 library
   exposed-modules:     PE.Parser
-  other-modules:       PE.Parser.Characteristics
+  other-modules:       PE.Parser.BaseRelocation
+                       PE.Parser.Characteristics
                        PE.Parser.DLLFlags
                        PE.Parser.DataDirectoryEntry
                        PE.Parser.ExportDirectoryTable
@@ -29,6 +30,7 @@ library
   build-depends:       base >= 4.10 && < 5,
                        binary >= 0.8 && < 0.9,
                        bytestring >= 0.9 && < 0.12,
+                       bv-sized >= 1 && < 1.1,
                        exceptions >= 0.8 && < 0.11,
                        parameterized-utils >= 2 && < 3,
                        prettyprinter >= 1.7 && < 1.8,

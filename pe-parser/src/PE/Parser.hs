@@ -46,7 +46,7 @@ module PE.Parser (
   module PPS,
   Section(..),
   getSection,
-  GetDataDirectoryEntry(..),
+  HasDataDirectoryEntry(..),
   getDataDirectoryEntry,
   -- ** Pre-defined machine types
   module PPM,
@@ -550,19 +550,19 @@ data PEException = MissingDirectoryEntry (Some PPDDE.DataDirectoryEntryName)
 
 instance X.Exception PEException
 
-class GetDataDirectoryEntry (entry :: PPDDE.DataDirectoryEntryKind) where
+class HasDataDirectoryEntry (entry :: PPDDE.DataDirectoryEntryKind) where
   type DataDirectoryEntryType entry :: Type
   dataDirectoryEntryParser :: proxy entry -> G.Get (DataDirectoryEntryType entry)
 
-instance GetDataDirectoryEntry 'PPDDE.ExportTableK where
+instance HasDataDirectoryEntry 'PPDDE.ExportTableK where
   type DataDirectoryEntryType 'PPDDE.ExportTableK = PPEDT.ExportDirectoryTable
   dataDirectoryEntryParser _ = PPEDT.parseExportDirectoryTable
 
-instance GetDataDirectoryEntry 'PPDDE.ImportTableK where
+instance HasDataDirectoryEntry 'PPDDE.ImportTableK where
   type DataDirectoryEntryType 'PPDDE.ImportTableK = PPIDT.ImportDirectoryTable
   dataDirectoryEntryParser _ = PPIDT.parseImportDirectoryTable
 
-instance GetDataDirectoryEntry 'PPDDE.BaseRelocationTableK where
+instance HasDataDirectoryEntry 'PPDDE.BaseRelocationTableK where
   type DataDirectoryEntryType 'PPDDE.BaseRelocationTableK = PPBR.BaseRelocationBlock
   dataDirectoryEntryParser _ = PPBR.parseBaseRelocationBlock
 
@@ -579,7 +579,7 @@ instance GetDataDirectoryEntry 'PPDDE.BaseRelocationTableK where
 -- DLL), or if no mapped section contains the address named in the export
 -- directory table descriptor.
 getDataDirectoryEntry :: forall entry w m
-                       . (X.MonadThrow m, GetDataDirectoryEntry entry)
+                       . (X.MonadThrow m, HasDataDirectoryEntry entry)
                       => PPDDE.DataDirectoryEntryName entry
                        -- ^ The data directory entry whose contents should be extracted
                       -> PEHeaderInfo FI.Identity w

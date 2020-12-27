@@ -19,20 +19,67 @@
 -- The two-phased parsing allows the errors to be separated out, supporting some
 -- binary analysis even if parsing some sections fails.
 --
--- Design goals:
+-- = Design goals
 --
 -- * The library should never call error (unless there is a proof that it cannot fail)
 -- * Magic strings are never stored
 -- * Un-parsed data should be preserved so that it can be reproduced into a new PE file as losslessly as possible
 --
--- Note that Portable Executable container values are always Little Endian (even
--- if code/data are Big Endian)
 --
--- Important concepts in the Portable Executable format:
+-- = PE Concepts
 --
--- * Image Base
--- * Relative Virtual Addresses
--- * 'PEWord' size
+-- == Endianness
+--
+-- The Portable Executable container format is always Little Endian, even if
+-- code/data are Big Endian.
+--
+-- == Image Base
+--
+-- The Image Base applies to executable images (executables and DLLs) that are
+-- mapped into memory at run-time.  The requested Image Base is specified in the
+-- 'PPH.PEOptionalHeader' (which is not optional for executables or DLLs).  The
+-- image base is the absolute address (in either a 32 bit or 64 bit address
+-- space) that the image is mapped at.
+--
+-- Relocations are applied based on the /difference/ between the actual image
+-- base chosen and the initial requested base address.
+--
+-- == Relative Virtual Addresses
+--
+-- Most addresses in a PE file are specified as Relative Virtual Addresses
+-- (RVAs).  These are (unsigned) 32 bit offsets from the Image Base.
+--
+-- == 'PPW.PEWord'
+--
+-- The 'PPW.PEWord' type represents values that depend on the pointer size of an
+-- architecture. In practice, this just means that the value can be either 32 or
+-- 64 bits.  There are a number of helpers for working with these variable size
+-- words.
+--
+-- = Usage Example
+--
+-- Typical use of this library looks something like:
+--
+-- >>> import qualified Data.ByteString.Lazy as BSL
+-- >>> import           Data.Parameterized.Some ( Some(..) )
+-- >>> import qualified PE.Parser as PE
+-- >>> :{
+-- parsePEFile :: FilePath -> IO ()
+-- parsePEFile peFilePath = do
+--   bytes <- BSL.readFile peFilePath
+--   case PE.decodePEHeaderInfo bytes of
+--     Left (off, msg) -> fail ("Error parsing PE file at offset " ++ show off ++ ": " ++ msg)
+--     Right (Some header) -> do
+--       -- Print out the contents of all of the headers that are present
+--       putStrLn (show (PE.ppPEHeaderInfo header))
+--       case PE.validatePEHeaderInfo header of
+--         Left {} -> do
+--           -- There is no PE Optional Header (and thus no Data Directory)
+--           return ()
+--         Right allHeaders -> do
+--           exceptionTable <- PE.getDataDirectoryEntry PE.ExceptionTableEntry allHeaders
+--           putStrLn (show (PE.ppExceptionTable exceptionTable))
+-- :}
 module PE.Parser (
   -- * Top-level API
   decodePEHeaderInfo,
@@ -40,7 +87,7 @@ module PE.Parser (
   PEHeaderInfo(..),
   parsePEHeaderInfo,
   ppPEHeaderInfo,
-  -- ** Top-level header structures
+  -- * Top-level header structures
   module PPH,
   -- ** Sections
   module PPS,

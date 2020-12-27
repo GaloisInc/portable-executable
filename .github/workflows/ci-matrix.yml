@@ -57,3 +57,7 @@ jobs:
     - name: Haddock
       run: |
         cabal v2-haddock pkg:pe-parser
+
+    - name: Test
+      run: |
+        cabal v2-test pkg:pe-parser

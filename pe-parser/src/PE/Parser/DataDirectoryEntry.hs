@@ -11,6 +11,7 @@ module PE.Parser.DataDirectoryEntry (
   ppDataDirectoryEntry,
   parseDataDirectoryEntry,
   isDataDirectoryEntry,
+  -- **** Type-level tags for 'DataDirectoryEntryName's
   DataDirectoryEntryKind,
   ExportTableK,
   ImportTableK,
@@ -133,6 +134,8 @@ instance PC.TestEquality DataDirectoryEntryName where
   testEquality = $(PTG.structuralTypeEquality [t| DataDirectoryEntryName |] [])
 
 -- | The full set of known Data Directory entries
+--
+-- These are meant to be paired up with the parsed 'DataDirectoryEntry' values
 allDataDirectoryEntryNames :: [Some DataDirectoryEntryName]
 allDataDirectoryEntryNames =
   [ Some ExportTableEntry
@@ -158,6 +161,7 @@ allDataDirectoryEntryNames =
 isDataDirectoryEntry :: DataDirectoryEntryName entry -> (Some DataDirectoryEntryName, a) -> Bool
 isDataDirectoryEntry name (Some entryName, _) = isJust (PC.testEquality name entryName)
 
+-- | Pretty print 'DataDirectoryEntryName's
 ppDataDirectoryEntryName :: DataDirectoryEntryName entry -> PP.Doc ann
 ppDataDirectoryEntryName n =
   case n of
@@ -177,6 +181,7 @@ ppDataDirectoryEntryName n =
     DelayImportDescriptorEntry -> PP.pretty "Delay Import Descriptor"
     CLRRuntimeHeaderEntry -> PP.pretty "CLR Runtime Header"
 
+-- | Parse a single 'DataDirectoryEntry'
 parseDataDirectoryEntry :: G.Get DataDirectoryEntry
 parseDataDirectoryEntry = do
   addr <- G.getWord32le
@@ -185,6 +190,16 @@ parseDataDirectoryEntry = do
                             , dataDirectoryEntrySize = size
                             }
 
+-- | Pretty print a 'DataDirectoryEntry'
+--
+-- This uses the list of section headers to determine which section each
+-- 'DataDirectoryEntry' resides in.  If there is no corresponding section, the
+-- enclosing section is simply not printed.  The name of the section is also
+-- expected to be provided externally, as it is not stored in the
+-- 'DataDirectoryEntry' (the ordinal position of each entry determines its
+-- interpretation).
+--
+-- Note that the list of section headers is allowed to be empty.
 ppDataDirectoryEntry :: [PPS.SectionHeader] -> (Some DataDirectoryEntryName, DataDirectoryEntry) -> Maybe (PP.Doc ann)
 ppDataDirectoryEntry secHeaders (Some entryName, dde)
   | dataDirectoryEntryAddress dde == 0 = Nothing
@@ -200,6 +215,7 @@ ppDataDirectoryEntry secHeaders (Some entryName, dde)
       hdr <- findDataDirectoryEntrySection secHeaders dde
       return (PP.pretty " in section " <> PP.pretty (PPS.sectionHeaderNameText hdr))
 
+-- | Find the 'PPS.SectionHeader' containing the given 'DataDirectoryEntry'
 findDataDirectoryEntrySection :: [PPS.SectionHeader] -> DataDirectoryEntry -> Maybe PPS.SectionHeader
 findDataDirectoryEntrySection secHeaders dde =
   F.find (PPS.sectionContains (dataDirectoryEntryAddress dde)) secHeaders

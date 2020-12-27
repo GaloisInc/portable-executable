@@ -248,10 +248,10 @@ data PEOptionalHeader w =
                    -- ^ Note: The on-disk file actually has a number of entries
                    -- here; the header parser parses them all out
                    --
-                   -- Empty 'DataDirectoryEntries' are included because they are
+                   -- Empty 'PPDDE.DataDirectoryEntries' are included because they are
                    -- present in the on-disk file.  The position in the table is
                    -- important, as each index corresponds to a specific table
-                   -- entry (see 'DataDirectoryEntryName' for supported values).
+                   -- entry (see 'PPDDE.DataDirectoryEntryName' for supported values).
                    -- This format is also useful, as it allows us to robustly
                    -- parse unrecognized table values.
                    }

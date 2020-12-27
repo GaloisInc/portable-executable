@@ -54,6 +54,9 @@ data ExportDirectoryTable =
 exportDirectoryTableSize :: Word32
 exportDirectoryTableSize = 40
 
+-- | Pretty print an 'ExportDirectoryTable'
+--
+-- Note that it does not resolve the embedded name (yet)
 ppExportDirectoryTable :: ExportDirectoryTable -> PP.Doc ann
 ppExportDirectoryTable edt =
   PP.vsep [ PP.pretty "Export Directory Table"
@@ -73,6 +76,7 @@ ppExportDirectoryTable edt =
              , PP.pretty "Ordinal Table Address: " <> PPP.ppHex (exportDirectoryTableOrdinalTableRVA edt)
              ]
 
+-- | Parse an 'ExportDirectoryTable'
 parseExportDirectoryTable :: G.Get ExportDirectoryTable
 parseExportDirectoryTable = do
   flags <- G.getWord32le

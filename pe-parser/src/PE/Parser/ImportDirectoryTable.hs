@@ -1,25 +1,33 @@
 module PE.Parser.ImportDirectoryTable (
   ImportDirectoryTable(..),
   parseImportDirectoryTable,
-  ppImportDirectoryTable,
-  importDirectoryTableSize
+  ppImportDirectoryTable
   ) where
 
 import qualified Data.Binary.Get as G
 import           Data.Word ( Word32 )
 import qualified Prettyprinter as PP
 
+import qualified PE.Parser.PEWord as PPW
 import qualified PE.Parser.Pretty as PPP
 
+-- | The header table describing import information for the image
 data ImportDirectoryTable =
   ImportDirectoryTable { importDirectoryTableLookupTableRVA :: Word32
+                       -- ^ The RVA of the Import Lookup Table
                        , importDirectoryTableTimestamp :: Word32
+                       -- ^ The timestamp is zero until the image is bound, at
+                       -- which point it is set to record the binding time
                        , importDirectoryTableForwarderChain :: Word32
+                       -- ^ The index of the first forward chain
                        , importDirectoryTableNameRVA :: Word32
+                       -- ^ The RVA of an ASCII string name of the DLL
                        , importDirectoryTableAddressTableRVA :: Word32
+                       -- ^ The RVA of the Import Address Table (the thunk table)
                        }
   deriving (Show)
 
+-- | Parse an 'ImportDirectoryTable'
 parseImportDirectoryTable :: G.Get ImportDirectoryTable
 parseImportDirectoryTable = do
   ltRVA <- G.getWord32le
@@ -35,9 +43,10 @@ parseImportDirectoryTable = do
                               , importDirectoryTableAddressTableRVA = atRVA
                               }
 
-importDirectoryTableSize :: Word32
-importDirectoryTableSize = 20
+instance PPW.StructureSize ImportDirectoryTable where
+  structureSize _ _ = 20
 
+-- | Pretty print an 'ImportDirectoryTable'
 ppImportDirectoryTable :: ImportDirectoryTable -> PP.Doc ann
 ppImportDirectoryTable idt =
   PP.vcat [ PP.pretty "Import Directory Table"

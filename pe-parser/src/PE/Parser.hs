@@ -13,8 +13,8 @@
 --
 -- The usage pattern of the library is to first parse 'BS.ByteString's into a
 -- 'PEHeaderInfo', which can be inspected to determine the architecture and
--- other relevant information.  The 'PEHeaderInfo' can then be parsed into a
--- full 'PE' structure.
+-- other relevant information.  The 'PEHeaderInfo' can then be used to parse out
+-- section contents and more specialized metadata tables.
 --
 -- The two-phased parsing allows the errors to be separated out, supporting some
 -- binary analysis even if parsing some sections fails.
@@ -25,7 +25,8 @@
 -- * Magic strings are never stored
 -- * Un-parsed data should be preserved so that it can be reproduced into a new PE file as losslessly as possible
 --
--- Note that Portable Executable container values are always Little Endian (even if code/data are Big Endian)
+-- Note that Portable Executable container values are always Little Endian (even
+-- if code/data are Big Endian)
 --
 -- Important concepts in the Portable Executable format:
 --
@@ -54,6 +55,8 @@ module PE.Parser (
   -- ** Architecture size handling
   PPW.PEClass(..),
   PPW.PEWord,
+  PPW.PEConstraints,
+  PPW.withPEConstraints,
   -- ** Pre-defined machine types
   module PPM,
   -- ** Subsystems
@@ -122,8 +125,8 @@ parseSectionTable numEntries = replicateM (fromIntegral numEntries) PPS.parseSec
 --
 -- The @f@ parameter is the "container" for the PEOptionalHeader, which is
 -- optional for COFF object files but not for executable files.  After
--- validation, this can be converted from a 'Maybe' to an 'Identity', so that
--- code requiring the 'PEOptionalHeader' can express that dependency.
+-- validation, this can be converted from a 'Maybe' to an 'FI.Identity', so that
+-- code requiring the 'PPH.PEOptionalHeader' can express that dependency.
 --
 -- The 'PEHeaderInfo' retains the bytestring it was parsed from so that the
 -- second phase (parsing out section contents) is guaranteed to work on the same
@@ -300,8 +303,14 @@ instance X.Exception PEException
 --
 -- Users should probably not need this (though 'ppDataDirectoryEntryValue' could be useful)
 class HasDataDirectoryEntry (entry :: PPDDE.DataDirectoryEntryKind) where
+  -- | The parsed table type that is parsed from this Data Directory entry
   type DataDirectoryEntryType entry :: Type
+  -- | The parser to parse a table entry
+  --
+  -- The parser is given the (machine word independent) 'PPH.PEHeader' and the
+  -- size of the data value to parse
   dataDirectoryEntryParser :: proxy entry -> PPH.PEHeader -> Word32 -> G.Get (DataDirectoryEntryType entry)
+  -- | Pretty print the data value
   ppDataDirectoryEntryValue :: proxy entry -> DataDirectoryEntryType entry -> PP.Doc ann
 
 instance HasDataDirectoryEntry PPDDE.ExportTableK where
@@ -329,7 +338,8 @@ instance HasDataDirectoryEntry PPDDE.ExceptionTableK where
 data SomeDataDirectoryEntry where
   SomeDataDirectoryEntry :: (HasDataDirectoryEntry entry) => PPDDE.DataDirectoryEntryName entry -> SomeDataDirectoryEntry
 
--- | All 'PPDE.DataDirectoryEntry' values that can be deeply inspected by this library
+-- | All 'PPDE.DataDirectoryEntry' values that can be deeply inspected by this
+-- library (i.e., parsed out using 'HasDataDirectoryEntry')
 allDataDirectoryEntries :: [SomeDataDirectoryEntry]
 allDataDirectoryEntries =
   [ SomeDataDirectoryEntry PPDDE.ExportTableEntry

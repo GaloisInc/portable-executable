@@ -7,6 +7,10 @@
 module PE.Parser.ExceptionTable (
   ExceptionTable(..),
   ExceptionTableEntry,
+  ExceptionTableFormat,
+  IntelK,
+  MIPSK,
+  CompactK,
   MIPSExceptionTableEntry(..),
   IntelExceptionTableEntry(..),
   CompactExceptionTableEntry(..),
@@ -79,13 +83,20 @@ data CompactExceptionTableEntry =
                         }
   deriving (Show)
 
+-- | A type-level data kind distinguishing the various Exception Table formats
 data ExceptionTableFormat = MIPSK | IntelK | CompactK
 
-data ExceptionTableRepr (format :: ExceptionTableFormat) where
-  MIPSExceptionRepr :: ExceptionTableRepr 'MIPSK
-  IntelExceptionRepr :: ExceptionTableRepr 'IntelK
-  CompactExceptionRepr :: ExceptionTableRepr 'CompactK
+type MIPSK = 'MIPSK
+type IntelK = 'IntelK
+type CompactK = 'CompactK
 
+-- | A value-level representative of the ExceptionTable format
+data ExceptionTableRepr (format :: ExceptionTableFormat) where
+  MIPSExceptionRepr :: ExceptionTableRepr MIPSK
+  IntelExceptionRepr :: ExceptionTableRepr IntelK
+  CompactExceptionRepr :: ExceptionTableRepr CompactK
+
+-- | Compute the size of an Exception Table entry
 exceptionTableEntrySize :: ExceptionTableRepr format -> Word32
 exceptionTableEntrySize rep =
   case rep of
@@ -106,15 +117,20 @@ $(return [])
 instance Show (ExceptionTableRepr format) where
   show = PC.showF
 
+-- | Map the type-level Exception Table specifier to its corresponding value type
 type family ExceptionTableEntry format where
-  ExceptionTableEntry 'MIPSK = MIPSExceptionTableEntry
-  ExceptionTableEntry 'IntelK = IntelExceptionTableEntry
-  ExceptionTableEntry 'CompactK = CompactExceptionTableEntry
+  ExceptionTableEntry MIPSK = MIPSExceptionTableEntry
+  ExceptionTableEntry IntelK = IntelExceptionTableEntry
+  ExceptionTableEntry CompactK = CompactExceptionTableEntry
 
+-- | An existential wrapper around collections of 'ExceptionTableEntry's,
+-- wrapped up with the relevant value-level representative
 data ExceptionTable =
   forall format .
   ExceptionTable { exceptionTableRepr :: ExceptionTableRepr format
+                 -- ^ The value level representative
                  , exceptionTableEntries :: V.Vector (ExceptionTableEntry format)
+                 -- ^ The collection of Exception Table entries (all guaranteed to be the same format)
                  }
 
 instance Show ExceptionTable where
@@ -158,6 +174,7 @@ machineExceptionRepr m =
     PPM.PE_MACHINE_WCEMIPSV2 -> Just (Some CompactExceptionRepr)
     _ -> Nothing
 
+-- | Parse an Exception Table entry (of the given format)
 parseExceptionTableEntry :: ExceptionTableRepr format -> G.Get (ExceptionTableEntry format)
 parseExceptionTableEntry repr =
   case repr of
@@ -194,6 +211,7 @@ parseExceptionTableEntry repr =
                                    , compactExceptionExceptionFlag = DB.testBit w32 0
                                    }
 
+-- | Pretty print an Exception Table entry
 ppExceptionTableEntry :: ExceptionTableRepr format -> ExceptionTableEntry format -> PP.Doc ann
 ppExceptionTableEntry repr tbl =
   case repr of
@@ -217,6 +235,7 @@ ppExceptionTableEntry repr tbl =
               , PP.pretty "Has Handler: " <> PP.pretty (compactExceptionExceptionFlag tbl)
               ]
 
+-- | Pretty print an 'ExceptionTable'
 ppExceptionTable :: ExceptionTable -> PP.Doc ann
 ppExceptionTable (ExceptionTable repr entries) =
   PP.vcat (fmap ppEntry (zip [0..] (F.toList entries)))
@@ -226,6 +245,15 @@ ppExceptionTable (ExceptionTable repr entries) =
               , PP.indent 4 (ppExceptionTableEntry repr entry)
               ]
 
+-- | Parse an entire Exception Table
+--
+-- This uses the 'PPH.PEHeader' to determine the machine type.  The table size
+-- is required to determine the number of entries to parse; this size is taken
+-- from the Data Directory Entry for the Exception Table.
+--
+-- Note that this can fail (safely via 'fail' in 'G.Get') if there is no
+-- Exception Header table format defined for the 'PE.Parser.Machine.Machine'
+-- architecture specified in the 'PPH.PEHeader'.
 parseExceptionTable :: PPH.PEHeader
                     -> Word32
                     -- ^ Table size (according to the Directory Entry)

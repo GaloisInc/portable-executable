@@ -8,7 +8,7 @@ module PE.Parser.Machine (
   Machine,
   ppMachine,
   parseMachine,
-  -- * Pre-defined machine values
+  -- *** Pre-defined machine values
   pattern PE_MACHINE_Unknown,
   pattern PE_MACHINE_AM33,
   pattern PE_MACHINE_AMD64,
@@ -41,48 +41,69 @@ import           Data.Word ( Word16 )
 import           Numeric ( showHex )
 import qualified Prettyprinter as PP
 
+-- | Machine architectures used as a tag in the 'PE.Parser.PEHeader'
+--
+-- While there are some pre-defined machine constants, it could technically be
+-- any 16 bit value
 newtype Machine = Machine Word16
   deriving (Show)
 
+-- | Parse a machine
 parseMachine :: G.Get Machine
 parseMachine = Machine <$> G.getWord16le
 
+-- | The documentation indicates that this is used for machine independent image content
 pattern PE_MACHINE_Unknown :: Machine
 pattern PE_MACHINE_Unknown = Machine 0
 
+-- | Matsushita AM33
 pattern PE_MACHINE_AM33 :: Machine
 pattern PE_MACHINE_AM33 = Machine 0x1d3
 
+-- | x86_64
 pattern PE_MACHINE_AMD64 :: Machine
 pattern PE_MACHINE_AMD64 = Machine 0x8664
 
+-- | AArch32 (little endian)
 pattern PE_MACHINE_ARM :: Machine
 pattern PE_MACHINE_ARM = Machine 0x1c0
 
+-- | AArch64 (little endian)
 pattern PE_MACHINE_ARM64 :: Machine
 pattern PE_MACHINE_ARM64 = Machine 0xaa64
 
+-- | ARM Thumb-2 (little endian)
 pattern PE_MACHINE_ARMNT :: Machine
 pattern PE_MACHINE_ARMNT = Machine 0x1c4
 
+-- | EFI bytecode
 pattern PE_MACHINE_EBC :: Machine
 pattern PE_MACHINE_EBC = Machine 0xebc
 
+-- | x86 32 bit
 pattern PE_MACHINE_I386 :: Machine
 pattern PE_MACHINE_I386 = Machine 0x14c
 
+-- | Itanium
 pattern PE_MACHINE_IA64 :: Machine
 pattern PE_MACHINE_IA64 = Machine 0x200
 
+-- | Mitsubishi M32R (little endian)
 pattern PE_MACHINE_M32R :: Machine
 pattern PE_MACHINE_M32R = Machine 0x9041
 
+-- | MIPS16 (a compact encoding of MIPS)
+--
+-- NOTE: This is probably not a 16 bit architecture - rather, each instruction
+-- is 16 bits
 pattern PE_MACHINE_MIPS16 :: Machine
 pattern PE_MACHINE_MIPS16 = Machine 0x266
 
+-- | MIPS with an FPU
 pattern PE_MACHINE_MIPSFPU :: Machine
 pattern PE_MACHINE_MIPSFPU = Machine 0x366
 
+-- | MIPS16 with an FPU
 pattern PE_MACHINE_MIPSFPU16 :: Machine
 pattern PE_MACHINE_MIPSFPU16 = Machine 0x466
 
@@ -94,36 +115,47 @@ pattern PE_MACHINE_POWERPC = Machine 0x1f0
 pattern PE_MACHINE_POWERPCFP :: Machine
 pattern PE_MACHINE_POWERPCFP = Machine 0x1f1
 
+-- | MIPS (little endian)
 pattern PE_MACHINE_R4000 :: Machine
 pattern PE_MACHINE_R4000 = Machine 0x166
 
+-- | RISC-V 32 bit
 pattern PE_MACHINE_RISCV32 :: Machine
 pattern PE_MACHINE_RISCV32 = Machine 0x5032
 
+-- | RISC-V 64 bit
 pattern PE_MACHINE_RISCV64 :: Machine
 pattern PE_MACHINE_RISCV64 = Machine 0x5064
 
+-- | RISC-V 128 bit
 pattern PE_MACHINE_RISCV128 :: Machine
 pattern PE_MACHINE_RISCV128 = Machine 0x5128
 
+-- | Hitachi SH3
 pattern PE_MACHINE_SH3 :: Machine
 pattern PE_MACHINE_SH3 = Machine 0x1a2
 
+-- | Hitachi SH3 (with DSP accelerator)
 pattern PE_MACHINE_SH3DSP :: Machine
 pattern PE_MACHINE_SH3DSP = Machine 0x1a3
 
+-- | Hitachi SH4
 pattern PE_MACHINE_SH4 :: Machine
 pattern PE_MACHINE_SH4 = Machine 0x1a6
 
+-- | Hitachi SH5
 pattern PE_MACHINE_SH5 :: Machine
 pattern PE_MACHINE_SH5 = Machine 0x1a8
 
+-- | Another Thumb variant
 pattern PE_MACHINE_Thumb :: Machine
 pattern PE_MACHINE_Thumb = Machine 0x1c2
 
+-- | MIPS little endian (windows ce?)
 pattern PE_MACHINE_WCEMIPSV2 :: Machine
 pattern PE_MACHINE_WCEMIPSV2 = Machine 0x168
 
+-- | Pretty print a 'Machine'
 ppMachine :: Machine -> PP.Doc a
 ppMachine m =
   case m of

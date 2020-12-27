@@ -61,7 +61,9 @@
 -- Typical use of this library looks something like:
 --
 -- >>> import qualified Data.ByteString.Lazy as BSL
+-- >>> import qualified Data.Foldable as F
 -- >>> import           Data.Parameterized.Some ( Some(..) )
+-- >>> import qualified Data.Text as T
 -- >>> import qualified PE.Parser as PE
 -- >>> :{
 -- parsePEFile :: FilePath -> IO ()
@@ -72,6 +74,14 @@
 --     Right (Some header) -> do
 --       -- Print out the contents of all of the headers that are present
 --       putStrLn (show (PE.ppPEHeaderInfo header))
+--       -- Find the .text section and report on its contents
+--       case F.find ((== T.pack ".text") . PE.sectionHeaderNameText) (PE.peSectionHeaders header) of
+--         Nothing -> putStrLn "No .text section"
+--         Just textSecHeader -> do
+--           textSection <- PE.getSection header textSecHeader
+--           let textBytes = PE.sectionContents textSection
+--           putStrLn (show (BSL.length textBytes) ++ " bytes in the .text section")
+--       -- Inspect the PE Optional Header (if present)
 --       case PE.validatePEHeaderInfo header of
 --         Left {} -> do
 --           -- There is no PE Optional Header (and thus no Data Directory)

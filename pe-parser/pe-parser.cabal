@@ -71,4 +71,5 @@ test-suite doctests
                   bytestring,
                   bv-sized,
                   parameterized-utils,
-                  pe-parser
+                  pe-parser,
+                  text

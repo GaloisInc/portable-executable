@@ -112,10 +112,10 @@ instance PC.TestEquality ExceptionTableRepr where
 instance PC.ShowF ExceptionTableRepr where
   showsPrecF = $(PTG.structuralShowsPrec [t|ExceptionTableRepr|])
 
-$(return [])
-
 instance Show (ExceptionTableRepr format) where
   show = PC.showF
+
+$(return [])
 
 -- | Map the type-level Exception Table specifier to its corresponding value type
 type family ExceptionTableEntry format where

@@ -18,14 +18,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        ghc: ['8.8.4', '8.10.7', '9.0.2']
-        cabal: ['3.6.2.0']
-        os: [ubuntu-latest, macOS-latest]
+        ghc: ['8.10.7', '9.2.7', '9.4.4']
+        cabal: ['3.8.1.0']
+        os: [ubuntu-22.04, macOS-12]
         exclude:
-          - os: macOS-latest
-            ghc: 8.8.4
-          - os: macOS-latest
+          - os: macOS-12
             ghc: 8.10.7
+          - os: macOS-12
+            ghc: 9.2.7
 
     name: GHC ${{ matrix.ghc }} on ${{ matrix.os }} portable-executable
 

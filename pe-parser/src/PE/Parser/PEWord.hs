@@ -5,6 +5,7 @@
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE RankNTypes #-}
 {-# LANGUAGE TypeFamilies #-}
+{-# LANGUAGE TypeOperators #-}
 -- | Definitions of types for types that change sizes in different PE variants (i.e., PE32 vs PE64)
 module PE.Parser.PEWord (
   PEConstraints,

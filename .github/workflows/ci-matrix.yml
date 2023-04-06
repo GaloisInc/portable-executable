@@ -51,7 +51,7 @@ jobs:
     - name: Build
       run: |
         cp cabal.project.dist cabal.project
-        cabal v2-configure pkg:pe-parser --write-ghc-environment-files=always -j1
+        cabal v2-configure pkg:pe-parser --write-ghc-environment-files=always --enable-tests -j2
         cabal v2-build pkg:pe-parser
 
     - name: Haddock

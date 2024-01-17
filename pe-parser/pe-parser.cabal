@@ -31,12 +31,12 @@ library
                        PE.Parser.Vector
   build-depends:       base >= 4.10 && < 5,
                        binary >= 0.8 && < 0.9,
-                       bytestring >= 0.9 && < 0.12,
+                       bytestring >= 0.9 && < 0.13,
                        bv-sized >= 1 && < 1.1,
                        exceptions >= 0.8 && < 0.11,
                        parameterized-utils >= 2 && < 3,
                        prettyprinter >= 1.7 && < 1.8,
-                       text >= 1 && < 2.1,
+                       text >= 1 && < 2.2,
                        vector >= 0.10 && < 0.14
   hs-source-dirs:      src
   default-language:    Haskell2010
@@ -63,7 +63,7 @@ test-suite doctests
   main-is:        Main.hs
   ghc-options:    -Wall -Wcompat -threaded
   build-depends:  base,
-                  doctest >= 0.10 && < 0.22,
+                  doctest >= 0.10 && < 0.23,
                   -- Dependencies required by the doctest examples
                   --
                   -- We need to specify these here, otherwise the doctests might get built before

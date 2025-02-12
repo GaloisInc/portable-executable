@@ -18,20 +18,20 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        ghc: ['9.4.8', '9.6.4', '9.8.1']
+        ghc: ['9.6.4', '9.8.4', '9.10.1']
         cabal: ['3.10.2.0']
-        os: [ubuntu-22.04, macOS-12]
+        os: [ubuntu-22.04, macOS-14]
         exclude:
-          - os: macOS-12
-            ghc: 9.4.8
-          - os: macOS-12
+          - os: macOS-14
             ghc: 9.6.4
+          - os: macOS-14
+            ghc: 9.8.4
 
     name: GHC ${{ matrix.ghc }} on ${{ matrix.os }} portable-executable
 
     steps:
     - uses: actions/checkout@v2
-    - uses: haskell/actions/setup@v1
+    - uses: haskell-actions/setup@v2
       id: setup-haskell-cabal
       name: Setup Haskell
       with:
